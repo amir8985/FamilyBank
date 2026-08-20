@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: familybank-backend
+    runtime: python
+    rootDir: backend
+    plan: free
+    buildCommand: pip install -r requirements.txt && alembic upgrade head
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      # Set these in the Render dashboard after the first deploy — never
+      # commit real values here. See backend/.env.example for what each
+      # one means and how to generate the random-secret ones.
+      - key: DATABASE_URL
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: BACKEND_JWT_SECRET
+        sync: false
+      - key: INTERNAL_SCHEDULER_SECRET
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: DEFAULT_BASE_CURRENCY
+        value: USD
+      # This process is long-running on Render (unlike Vercel's
+      # serverless functions), so the in-process scheduler is the right
+      # mechanism here — no external cron needed.
+      - key: SCHEDULER_ENABLED
+        value: "true"
+      - key: SCHEDULER_INTERVAL_HOURS
+        value: "5"
+      # Never set this to true in production.
+      - key: DEV_MODE
+        value: "false"
