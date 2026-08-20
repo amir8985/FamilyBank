@@ -24,7 +24,9 @@ class AssetCatalog(Base):
 
     symbol: Mapped[str] = mapped_column(primary_key=True)
     display_name: Mapped[str]
-    kind: Mapped[AssetKind] = mapped_column(SAEnum(AssetKind, name="asset_kind"))
+    kind: Mapped[AssetKind] = mapped_column(
+        SAEnum(AssetKind, name="asset_kind", values_callable=lambda e: [m.value for m in e])
+    )
     description: Mapped[str] = mapped_column(default="")
 
 

@@ -8,9 +8,6 @@ from app.core.security import AuthContext, get_current_auth
 from app.models.family import Family
 from app.models.kid import Kid
 
-DbSession = AsyncSession
-Auth = AuthContext
-
 
 async def get_family(
     auth: AuthContext = Depends(get_current_auth), db: AsyncSession = Depends(get_db)

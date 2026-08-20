@@ -16,6 +16,7 @@ from app.core.db import SessionLocal
 from app.models.catalog import AssetCatalog, PriceCache
 from app.models.family import Family
 from app.services import fx_service
+from app.services.investing_service import clear_price_context_cache
 from app.services.price_client import PriceFetchError, fetch_quote
 
 logger = logging.getLogger("familybank.scheduler")
@@ -59,8 +60,10 @@ async def _refresh_prices(session: AsyncSession, client: httpx.AsyncClient) -> s
 
 
 async def run_refresh() -> None:
+    logger.info("Scheduler refresh starting")
     async with SessionLocal() as session:
         async with httpx.AsyncClient() as client:
+            symbol_count = len((await session.scalars(select(AssetCatalog.symbol))).all())
             native_currencies = await _refresh_prices(session, client)
             await session.commit()
 
@@ -76,4 +79,13 @@ async def run_refresh() -> None:
             await fx_service.refresh_fx_rates(session, client, pairs)
             await session.commit()
 
-    logger.info("Scheduler refresh complete: %d currencies, run at %s", len(native_currencies), datetime.now(timezone.utc))
+    # So requests right after a refresh see the new prices immediately,
+    # rather than waiting out the safety-net TTL (investing_service.py).
+    clear_price_context_cache()
+
+    logger.info(
+        "Scheduler refresh complete: %d symbols, %d FX pairs, at %s",
+        symbol_count,
+        len(pairs),
+        datetime.now(timezone.utc),
+    )

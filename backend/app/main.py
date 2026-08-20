@@ -1,3 +1,7 @@
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -11,10 +15,27 @@ from app.api import (
     routes_kids,
 )
 from app.core.config import get_settings
+from app.scheduler.loop import run_forever
 
 settings = get_settings()
 
-app = FastAPI(title="FamilyBank API", version="1.0.0")
+# Makes the scheduler's "starting" / "refresh complete" / "refresh failed"
+# log lines actually show up — without this, INFO records propagate to a
+# root logger with no handler and are silently dropped.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = None
+    if settings.scheduler_enabled:
+        task = asyncio.create_task(run_forever())
+    yield
+    if task is not None:
+        task.cancel()
+
+
+app = FastAPI(title="FamilyBank API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

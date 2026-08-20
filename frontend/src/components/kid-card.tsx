@@ -55,9 +55,14 @@ export function KidCard({
             <span className={isPositive ? "text-positive" : "text-negative"}> {dayChangePct}</span>
           )}
         </div>
-        <Link href={`/home/kids/${kid.id}`} className="text-[13px] font-semibold text-emerald">
-          Investments →
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link href={`/home/kids/${kid.id}/history`} className="text-[13px] font-semibold text-muted-strong">
+            History
+          </Link>
+          <Link href={`/home/kids/${kid.id}`} className="text-[13px] font-semibold text-emerald">
+            Investments →
+          </Link>
+        </div>
       </div>
     </div>
   );

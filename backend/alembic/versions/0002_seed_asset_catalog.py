@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects import postgresql
 
 from app.services.catalog_service import SEED_ASSETS
 
@@ -17,11 +18,14 @@ down_revision: Union[str, None] = "0001"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+# asyncpg (unlike psycopg2) won't implicitly cast a VARCHAR bind param to
+# an enum column — the column type here has to match asset_kind exactly,
+# with create_type=False since 0001 already created the Postgres type.
 asset_catalog = sa.table(
     "asset_catalog",
     sa.column("symbol", sa.String),
     sa.column("display_name", sa.String),
-    sa.column("kind", sa.String),
+    sa.column("kind", postgresql.ENUM("stock", "basket", name="asset_kind", create_type=False)),
     sa.column("description", sa.String),
 )
 

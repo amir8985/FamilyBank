@@ -16,12 +16,15 @@ class AssetOut(BaseModel):
     price: Decimal | None = None
     price_currency: str | None = None
     day_change_pct: Decimal | None = None
+    # When the scheduler last refreshed this price — prices are batch
+    # updated 4-5x/day (spec 4.3), never truly live, so the frontend
+    # shows this instead of claiming "live".
+    price_updated_at: datetime | None = None
 
 
 class AssetDetailOut(AssetOut):
     # The currency the raw price is actually quoted in (e.g. USD for
-    # AAPL) — shown as a caption ("live price, in $") alongside the
-    # already-converted `price` above, per the handoff.
+    # AAPL) — shown as a caption alongside the already-converted `price`.
     native_currency: str | None = None
     # Native-currency lookback history — spec 2.4 keeps the chart
     # unconverted, only the live price/buy amounts are converted.
@@ -34,6 +37,12 @@ class HoldingOut(BaseModel):
     units: Decimal
     current_value: Decimal
     day_change_pct: Decimal | None
+    # Total return since this holding's average cost basis — currency-
+    # agnostic (both current price and avg_cost are in the same native
+    # currency for the symbol, so FX cancels out). Shown instead of
+    # day_change_pct in the holdings list, since "how has MY investment
+    # done" matters more there than today's wiggle.
+    since_purchase_pct: Decimal | None
 
 
 class PortfolioOut(BaseModel):

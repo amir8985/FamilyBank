@@ -21,7 +21,7 @@ def upgrade() -> None:
     op.create_table(
         "families",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("base_currency", sa.String(), nullable=False, server_default="ILS"),
+        sa.Column("base_currency", sa.String(), nullable=False, server_default="USD"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
     )
 

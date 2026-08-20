@@ -5,7 +5,6 @@ import Link from "next/link";
 import { Logo } from "@/components/ui/logo";
 import { KidCard } from "@/components/kid-card";
 import { DebtSheet } from "@/components/debt-sheet";
-import { AddKidSheet } from "@/components/add-kid-sheet";
 import { formatMoney } from "@/lib/format";
 import type { FamilyHome, KidSummary } from "@/lib/types";
 import type { DebtTransactionType } from "@/lib/types";
@@ -15,7 +14,6 @@ export function HomeClient({ home }: { home: FamilyHome }) {
     kid: KidSummary;
     direction: DebtTransactionType;
   } | null>(null);
-  const [addKidOpen, setAddKidOpen] = useState(false);
 
   return (
     <div className="max-w-md mx-auto flex flex-col min-h-screen">
@@ -37,6 +35,11 @@ export function HomeClient({ home }: { home: FamilyHome }) {
         <div className="font-serif font-semibold text-[34px] text-emerald">
           {formatMoney(home.total_owed, home.base_currency)}
         </div>
+        {Number(home.total_invested) > 0 && (
+          <div className="text-[13px] font-medium text-muted mt-0.5">
+            + {formatMoney(home.total_invested, home.base_currency)} in investments
+          </div>
+        )}
       </div>
 
       <div className="flex-1 px-5 pt-3.5 pb-6 flex flex-col gap-3">
@@ -50,13 +53,15 @@ export function HomeClient({ home }: { home: FamilyHome }) {
           />
         ))}
 
-        <button
-          type="button"
-          onClick={() => setAddKidOpen(true)}
-          className="text-center p-3 text-muted font-semibold text-[13.5px] border-[1.5px] border-dashed border-border-hairline-strong rounded-2xl cursor-pointer"
-        >
-          + Add a kid
-        </button>
+        {home.kids.length === 0 && (
+          <p className="text-center text-[13px] text-muted pt-4">
+            No kids yet —{" "}
+            <Link href="/home/settings" className="font-semibold text-emerald">
+              add one in Settings
+            </Link>
+            .
+          </p>
+        )}
       </div>
 
       {debtTarget && (
@@ -69,8 +74,6 @@ export function HomeClient({ home }: { home: FamilyHome }) {
           initialDirection={debtTarget.direction}
         />
       )}
-
-      {addKidOpen && <AddKidSheet onClose={() => setAddKidOpen(false)} />}
     </div>
   );
 }

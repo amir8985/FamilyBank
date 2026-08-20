@@ -76,3 +76,31 @@ async def get_rate(session: AsyncSession, base: str, quote: str) -> Decimal:
 async def convert(session: AsyncSession, amount: Decimal, base: str, quote: str) -> Decimal:
     rate = await get_rate(session, base, quote)
     return amount * rate
+
+
+RateTable = dict[tuple[str, str], Decimal]
+
+
+async def load_all_rates(session: AsyncSession) -> RateTable:
+    """One query for every cached FX rate — used by list/portfolio views
+    that need to convert many prices at once, so they don't run one FX
+    query per asset/holding (that N+1 pattern is what made /home and
+    /catalog take 2+ seconds each against Neon's network latency)."""
+    rows = await session.execute(select(FxRateCache.base_currency, FxRateCache.quote_currency, FxRateCache.rate))
+    return {(base, quote): rate for base, quote, rate in rows}
+
+
+def rate_from_table(rates: RateTable, base: str, quote: str) -> Decimal | None:
+    if base == quote:
+        return Decimal("1")
+    if (base, quote) in rates:
+        return rates[(base, quote)]
+    inverse = rates.get((quote, base))
+    if inverse:
+        return Decimal("1") / inverse
+    return None
+
+
+def convert_from_table(rates: RateTable, amount: Decimal, base: str, quote: str) -> Decimal | None:
+    rate = rate_from_table(rates, base, quote)
+    return amount * rate if rate is not None else None

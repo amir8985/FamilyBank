@@ -44,5 +44,9 @@ class InvestmentTransaction(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     price: Mapped[Decimal] = mapped_column(Numeric(14, 4))
     price_currency: Mapped[str]
     type: Mapped[InvestmentTransactionType] = mapped_column(
-        SAEnum(InvestmentTransactionType, name="investment_transaction_type")
+        SAEnum(
+            InvestmentTransactionType,
+            name="investment_transaction_type",
+            values_callable=lambda e: [m.value for m in e],
+        )
     )

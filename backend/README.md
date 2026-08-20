@@ -44,6 +44,36 @@ In production this is what a Vercel/Railway Cron job hits 4-5x/day
    request body/path — so there's no way for one family to address
    another's data (architecture 5.5).
 
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest -v
+```
+
+Runs against your real `DATABASE_URL` — safe to do, since every test runs
+inside one outer transaction that's rolled back at teardown (SQLAlchemy's
+`join_transaction_mode="create_savepoint"`, see `tests/conftest.py`), so
+nothing a test does is ever visible outside that test or left behind
+afterward. Covers:
+
+- `test_fx_service.py` — pure currency-conversion math, no DB
+- `test_debts_db_service.py` — the debt ledger (add/deduct/negative/batched balances)
+- `test_investing_service.py` — buy/sell atomicity, insufficient-funds,
+  overselling, cost averaging, day-change %, catalog ordering, and
+  graceful handling of a missing FX rate (regression tests for the real
+  bugs found during manual testing: the `func.case()` typo, the enum
+  `values_callable` mismatch, and the autobegin/commit issue)
+- `test_api_auth.py` — `/auth/sync`, with Google's own verification
+  mocked at that one boundary (see its docstring for why)
+- `test_api_family_isolation.py` — the property architecture 5.5 flags as
+  most important: one family can never reach another's data
+- `test_api_e2e_journey.py` — the full parent journey through the real
+  API (sign-in → onboarding → kids → debt → buy/sell → settings) — the
+  practical equivalent of a browser end-to-end test, since real Google
+  login can't be safely scripted (see `../frontend/e2e/` for what *is*
+  covered at the browser level)
+
 ## Layout
 
 ```

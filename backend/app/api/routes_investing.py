@@ -28,6 +28,14 @@ async def get_portfolio(
     return PortfolioOut(**data)
 
 
+@router.get("/investment-transactions", response_model=list[InvestmentTransactionOut])
+async def list_investment_transactions(
+    kid: Kid = Depends(get_kid), db: AsyncSession = Depends(get_db)
+) -> list[InvestmentTransactionOut]:
+    rows = await investing_service.list_investment_transactions(db, kid.id)
+    return [InvestmentTransactionOut.model_validate(r, from_attributes=True) for r in rows]
+
+
 @router.post("/quote", response_model=BuySellQuoteResponse)
 async def quote_purchase(
     body: BuySellQuoteRequest,
@@ -52,11 +60,13 @@ async def buy(
     db: AsyncSession = Depends(get_db),
 ) -> InvestmentTransactionOut:
     try:
-        # buy() commits atomically itself (cash debit + holding + txn log
-        # all in one db.transaction()) — no separate commit here.
         txn = await investing_service.buy(db, kid, family.base_currency, body.symbol, body.units)
     except investing_service.InvestingError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    # buy()'s internal db.transaction() only opens a real transaction if
+    # one wasn't already running (see db.py) — since get_kid/get_family
+    # already autobegin one, this commit is what actually persists it.
+    await db.commit()
     return InvestmentTransactionOut.model_validate(txn, from_attributes=True)
 
 
@@ -68,8 +78,8 @@ async def sell(
     db: AsyncSession = Depends(get_db),
 ) -> InvestmentTransactionOut:
     try:
-        # sell() commits atomically itself, same as buy() above.
         txn = await investing_service.sell(db, kid, family.base_currency, body.symbol, body.units)
     except investing_service.InvestingError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    await db.commit()  # see buy() above for why this is needed, not redundant
     return InvestmentTransactionOut.model_validate(txn, from_attributes=True)

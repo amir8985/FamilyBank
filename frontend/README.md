@@ -57,6 +57,26 @@ src/
    and sent as `Authorization: Bearer ...` on every backend call — see
    `lib/api.ts` and `lib/session.ts`.
 
+## Tests
+
+```bash
+npx playwright install chromium   # once
+npm run dev                       # in one terminal
+npm run test:e2e                  # in another
+```
+
+Covers the public landing page and confirms every authenticated route
+correctly bounces an unauthenticated visitor back to it. It deliberately
+does **not** attempt to script a real Google sign-in — that's the one
+external boundary this project can't safely automate (Google both
+requires a real account and actively blocks scripted logins), so
+everything past that point is covered instead by the backend's
+API-level end-to-end suite (`../backend/tests/test_api_e2e_journey.py`),
+which exercises the exact same calls the frontend makes.
+
+If your dev server isn't on port 3000 (e.g. something else already
+has it), point the tests at the right one: `E2E_BASE_URL=http://localhost:3002 npm run test:e2e`.
+
 ## PWA
 
 `app/manifest.ts` + `public/sw.js` (a no-op pass-through worker) make

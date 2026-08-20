@@ -24,10 +24,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             token.backendToken = data.session_token;
             token.familyId = data.family_id;
             token.baseCurrency = data.base_currency;
+          } else {
+            console.error("[auth] backend /auth/sync rejected:", res.status, await res.text());
           }
-        } catch {
+        } catch (err) {
           // Backend unreachable — session still gets created, but
           // protected pages will redirect until the sync succeeds.
+          console.error("[auth] backend /auth/sync unreachable:", err);
         }
       }
       return token;

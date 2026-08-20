@@ -1,4 +1,5 @@
 import uuid
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -20,13 +21,23 @@ async def get_family_home(
     family: Family = Depends(get_family), db: AsyncSession = Depends(get_db)
 ) -> FamilyHome:
     kids = (await db.scalars(select(Kid).where(Kid.family_id == family.id).order_by(Kid.created_at))).all()
+    kid_ids = [kid.id for kid in kids]
+
+    # Everything below is 3 fixed queries total (context) + 2 batched
+    # queries (balances, holdings) regardless of how many kids/holdings
+    # there are — was previously 1 + N*(1 + M) queries per kid/holding.
+    ctx = await investing_service.load_price_context(db)
+    balances = await debts_db_service.get_balances(db, kid_ids)
+    holdings_by_kid = await investing_service.get_holdings_by_kid(db, kid_ids)
 
     summaries = []
-    total_owed = 0
+    total_owed = Decimal("0")
+    total_invested = Decimal("0")
     for kid in kids:
-        cash = await debts_db_service.get_balance(db, kid.id)
-        portfolio = await investing_service.get_portfolio(db, kid, family.base_currency)
+        cash = balances[kid.id]
+        portfolio = investing_service.compute_portfolio(kid, cash, holdings_by_kid[kid.id], ctx, family.base_currency)
         total_owed += cash
+        total_invested += portfolio["holdings_value"]
         summaries.append(
             KidSummary(
                 id=kid.id,
@@ -38,7 +49,9 @@ async def get_family_home(
             )
         )
 
-    return FamilyHome(base_currency=family.base_currency, total_owed=total_owed, kids=summaries)
+    return FamilyHome(
+        base_currency=family.base_currency, total_owed=total_owed, total_invested=total_invested, kids=summaries
+    )
 
 
 @router.post("/kids", response_model=KidSummary, status_code=201)

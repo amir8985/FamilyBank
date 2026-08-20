@@ -14,7 +14,13 @@ export type KidSummary = {
 export type FamilyHome = {
   base_currency: string;
   total_owed: string;
+  total_invested: string;
   kids: KidSummary[];
+};
+
+export type FamilySettings = {
+  base_currency: string;
+  onboarding_completed: boolean;
 };
 
 export type DebtTransactionType = "add" | "deduct";
@@ -42,6 +48,7 @@ export type AssetOut = {
   price: string | null;
   price_currency: string | null;
   day_change_pct: string | null;
+  price_updated_at: string | null;
 };
 
 export type AssetDetailOut = AssetOut & {
@@ -55,6 +62,7 @@ export type HoldingOut = {
   units: string;
   current_value: string;
   day_change_pct: string | null;
+  since_purchase_pct: string | null;
 };
 
 export type PortfolioOut = {

@@ -1,0 +1,50 @@
+import { requireSession } from "@/lib/session";
+import { api } from "@/lib/api";
+import { PageHeader } from "@/components/ui/page-header";
+import { formatDateTime, formatMoney } from "@/lib/format";
+import type { DebtTransactionOut, FamilySettings, PortfolioOut } from "@/lib/types";
+
+export default async function KidHistoryPage({
+  params,
+}: {
+  params: Promise<{ kidId: string }>;
+}) {
+  const { kidId } = await params;
+  const session = await requireSession();
+
+  const [transactions, portfolio, settings] = await Promise.all([
+    api.get<DebtTransactionOut[]>(`/kids/${kidId}/debt`, session.backendToken),
+    api.get<PortfolioOut>(`/kids/${kidId}/portfolio`, session.backendToken),
+    api.get<FamilySettings>("/family/settings", session.backendToken),
+  ]);
+
+  return (
+    <div className="max-w-md mx-auto min-h-screen flex flex-col">
+      <PageHeader title={`${portfolio.kid_name}'s History`} backHref="/home" />
+
+      <div className="flex-1 px-5 pt-3 pb-6 flex flex-col gap-2.5">
+        {transactions.length === 0 && (
+          <p className="text-center text-[13px] text-muted pt-4">No balance changes yet.</p>
+        )}
+        {transactions.map((t) => (
+          <div
+            key={t.id}
+            className="bg-card rounded-2xl px-4 py-3 border border-border-hairline flex items-center justify-between"
+          >
+            <div>
+              <div className="font-semibold text-[14px] text-emerald-dark capitalize">
+                {t.type === "add" ? "Added" : "Deducted"}
+              </div>
+              {t.note && <div className="text-[12px] text-muted mt-0.5">{t.note}</div>}
+              <div className="text-[11px] text-muted mt-0.5">{formatDateTime(t.created_at)}</div>
+            </div>
+            <div className={`font-semibold text-[15px] ${t.type === "add" ? "text-positive" : "text-negative"}`}>
+              {t.type === "add" ? "+" : "−"}
+              {formatMoney(t.amount, settings.base_currency)}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

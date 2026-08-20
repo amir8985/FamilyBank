@@ -14,7 +14,8 @@ router = APIRouter(prefix="/catalog", tags=["catalog"])
 async def list_catalog(
     family: Family = Depends(get_family), db: AsyncSession = Depends(get_db)
 ) -> list[AssetOut]:
-    rows = await investing_service.list_catalog(db, family.base_currency)
+    ctx = await investing_service.load_price_context(db)
+    rows = investing_service.list_catalog(ctx, family.base_currency)
     return [AssetOut(**r) for r in rows]
 
 

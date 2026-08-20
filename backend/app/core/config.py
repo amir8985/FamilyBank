@@ -25,7 +25,20 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:3000"
 
-    default_base_currency: str = "ILS"
+    default_base_currency: str = "USD"
+
+    # Gates dev-only endpoints (see routes_internal.py's /internal/dev-reset)
+    # — must be explicitly true; never set this in a real deployment.
+    dev_mode: bool = False
+
+    # In-process price/FX refresh loop (see app/scheduler/loop.py). Runs
+    # only while this process is alive, so it's the right mechanism for a
+    # long-running deployment (local dev, Railway, ...) — a serverless
+    # deployment (Vercel) has no long-running process to run this in and
+    # should instead hit POST /internal/refresh from an external cron,
+    # with this disabled to avoid refreshing twice.
+    scheduler_enabled: bool = True
+    scheduler_interval_hours: float = 5.0
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -5,8 +5,13 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { api, ApiError } from "@/lib/api";
-import { formatMoney, formatUnits } from "@/lib/format";
+import { defaultUnitStep, formatMoney, trimUnits } from "@/lib/format";
 import type { HoldingOut, InvestmentTransactionOut } from "@/lib/types";
+
+function decimalsForStep(step: number): number {
+  if (step >= 1) return 0;
+  return Math.round(-Math.log10(step));
+}
 
 // Caller mounts this only while the sheet should be visible (see
 // portfolio-client.tsx), so each open is a fresh mount — no reset effect needed.
@@ -25,16 +30,25 @@ export function SellSheet({
 }) {
   const { data: session } = useSession();
   const router = useRouter();
-  const [unitsStr, setUnitsStr] = useState(holding.units);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const totalUnits = Number(holding.units);
   const pricePerUnit = totalUnits > 0 ? Number(holding.current_value) / totalUnits : 0;
+  const step = defaultUnitStep(pricePerUnit);
+  const stepDecimals = decimalsForStep(step);
+
+  const [unitsStr, setUnitsStr] = useState(() => trimUnits(holding.units));
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const units = Math.min(Number(unitsStr) || 0, totalUnits);
   const proceeds = units * pricePerUnit;
   const valid = units > 0 && units <= totalUnits;
+
+  function adjust(direction: 1 | -1) {
+    const current = Number(unitsStr) || 0;
+    const next = Math.min(totalUnits, Math.max(step, current + direction * step));
+    setUnitsStr(next.toFixed(stepDecimals));
+  }
 
   async function handleConfirm() {
     if (!session?.backendToken || !valid) return;
@@ -60,28 +74,45 @@ export function SellSheet({
         Sell {holding.display_name}
       </h2>
       <p className="text-[12.5px] text-muted -mt-3">
-        You hold {formatUnits(holding.units)} units, worth {formatMoney(holding.current_value, currency)}.
+        You hold {trimUnits(holding.units)} units, worth {formatMoney(holding.current_value, currency)}.
       </p>
 
-      <label className="flex flex-col gap-1.5">
+      <div className="flex flex-col gap-1.5">
         <span className="text-[12px] font-semibold text-muted">Units to sell</span>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center justify-center gap-4 py-2">
+          <button
+            type="button"
+            aria-label="Fewer units"
+            disabled={units <= step}
+            onClick={() => adjust(-1)}
+            className="w-9 h-9 rounded-full bg-tint-emerald text-emerald text-[20px] font-bold flex items-center justify-center disabled:opacity-30 cursor-pointer"
+          >
+            −
+          </button>
           <input
-            autoFocus
             inputMode="decimal"
             value={unitsStr}
             onChange={(e) => setUnitsStr(e.target.value.replace(/[^0-9.]/g, ""))}
-            className="flex-1 border border-border-hairline-strong rounded-[10px] px-3.5 py-3 text-[14.5px] text-emerald-dark outline-none focus:border-emerald"
+            className="w-28 text-center font-serif font-semibold text-[28px] text-emerald bg-transparent outline-none border-b border-border-hairline-strong focus:border-emerald"
           />
           <button
             type="button"
-            onClick={() => setUnitsStr(holding.units)}
-            className="text-[12.5px] font-semibold text-emerald px-3 py-3 cursor-pointer"
+            aria-label="More units"
+            disabled={units >= totalUnits}
+            onClick={() => adjust(1)}
+            className="w-9 h-9 rounded-full bg-tint-emerald text-emerald text-[20px] font-bold flex items-center justify-center disabled:opacity-30 cursor-pointer"
           >
-            Sell all
+            +
           </button>
         </div>
-      </label>
+        <button
+          type="button"
+          onClick={() => setUnitsStr(trimUnits(holding.units))}
+          className="self-center text-[12.5px] font-semibold text-emerald cursor-pointer"
+        >
+          Sell all
+        </button>
+      </div>
 
       <div className="text-center py-[18px] bg-cream rounded-2xl">
         <div className="font-serif font-semibold text-[32px] text-emerald">

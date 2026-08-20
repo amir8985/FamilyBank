@@ -20,4 +20,5 @@ class KidSummary(BaseModel):
 class FamilyHome(BaseModel):
     base_currency: str
     total_owed: Decimal
+    total_invested: Decimal
     kids: list[KidSummary]
