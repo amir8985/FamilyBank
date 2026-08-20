@@ -187,9 +187,38 @@ worktree/checkout.
 
 You're likely one of several parallel Claude sessions, each in its own
 `git worktree` on its own `worker-N` branch, all sharing this one repo's
-history and — importantly — **the one real Neon database** (see "The
-database is real, not a sandbox" above; this matters even more with
-several sessions running at once). A few things specific to that setup:
+history and — importantly — **the one Neon dev/test branch** (see
+"Database: dev/test branch vs. production" above; this matters even more
+with several sessions running at once). A few things specific to that
+setup:
+
+### Quick start (worktrees created 2026-08-20)
+
+`backend/.env` and `frontend/.env.local` were pre-copied into each
+worktree with **unique ports already assigned** so all three can run
+their dev servers simultaneously without colliding:
+
+| Worktree | Backend port | Frontend port |
+|---|---|---|
+| `FamilyBank-worker-1` | 8011 | 3011 |
+| `FamilyBank-worker-2` | 8012 | 3012 |
+| `FamilyBank-worker-3` | 8013 | 3013 |
+
+First time in a given worktree, install deps (not shared across
+worktrees — `.venv`/`node_modules` are gitignored), then start with the
+matching port explicitly:
+
+```bash
+cd backend && python -m venv .venv && .venv/Scripts/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port <your-backend-port>
+
+cd frontend && npm install
+npm run dev -- -p <your-frontend-port>
+```
+
+If a fourth worktree gets created later, pick the next port pair
+(8014/3014, etc.) and update its `.env`/`.env.local` the same way.
 
 - `master` is the trunk **and the deploy branch** (see "Deployed and
   confirmed working" above) — branch off it, merge back into it, and
