@@ -1,0 +1,79 @@
+"""The one global scheduler job (architecture 5.3): refreshes price_cache
+and fx_rates_cache together, 4-5x/day, for every symbol once — never
+per-family, never per-request (spec 4.3).
+"""
+
+import logging
+from datetime import datetime, timezone
+from decimal import Decimal
+
+import httpx
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.db import SessionLocal
+from app.models.catalog import AssetCatalog, PriceCache
+from app.models.family import Family
+from app.services import fx_service
+from app.services.price_client import PriceFetchError, fetch_quote
+
+logger = logging.getLogger("familybank.scheduler")
+
+
+async def _refresh_prices(session: AsyncSession, client: httpx.AsyncClient) -> set[str]:
+    now = datetime.now(timezone.utc)
+    symbols = (await session.scalars(select(AssetCatalog.symbol))).all()
+    native_currencies: set[str] = set()
+
+    for symbol in symbols:
+        try:
+            data = await fetch_quote(client, symbol)
+        except (PriceFetchError, httpx.HTTPError) as exc:
+            logger.warning("Price fetch failed for %s: %s", symbol, exc)
+            continue
+
+        native_currencies.add(data["currency"])
+        stmt = (
+            insert(PriceCache)
+            .values(
+                symbol=symbol,
+                price=Decimal(str(data["price"])),
+                currency=data["currency"],
+                updated_at=now,
+                history_json=data["history"],
+            )
+            .on_conflict_do_update(
+                index_elements=["symbol"],
+                set_={
+                    "price": Decimal(str(data["price"])),
+                    "currency": data["currency"],
+                    "updated_at": now,
+                    "history_json": data["history"],
+                },
+            )
+        )
+        await session.execute(stmt)
+
+    return native_currencies
+
+
+async def run_refresh() -> None:
+    async with SessionLocal() as session:
+        async with httpx.AsyncClient() as client:
+            native_currencies = await _refresh_prices(session, client)
+            await session.commit()
+
+            base_currencies = set((await session.scalars(select(Family.base_currency))).all())
+            base_currencies.add("USD")  # keep USD<->everything warm regardless of family mix
+
+            pairs = {
+                (native, base)
+                for native in native_currencies
+                for base in base_currencies
+                if native != base
+            }
+            await fx_service.refresh_fx_rates(session, client, pairs)
+            await session.commit()
+
+    logger.info("Scheduler refresh complete: %d currencies, run at %s", len(native_currencies), datetime.now(timezone.utc))

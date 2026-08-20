@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Figtree:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&family=Karla:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  body{margin:0;background:#eeece6;font-family:Figtree,sans-serif}
+  .dv-turn{padding:44px 44px 36px;border-bottom:1px solid rgba(0,0,0,.08)}
+  .dv-thd{display:flex;align-items:baseline;gap:12px;margin:0 0 8px}
+  .dv-tid{font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#1a1a1a;color:#fff;border-radius:4px;text-decoration:none}
+  .dv-tname{font:600 15px/1.2 system-ui,sans-serif;color:#1a1a1a}
+  .dv-tsub{margin:0 0 24px;font:13px/1.5 system-ui,sans-serif;color:rgba(0,0,0,.55);max-width:620px}
+  .dv-opts{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start}
+  .dv-opt{flex:none;display:flex;flex-direction:column;gap:10px}
+  .dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#1a1a1a;border-radius:5px;text-decoration:none}
+  .dv-olabel{display:flex;align-items:baseline;gap:8px;font:400 12px/1.3 system-ui,sans-serif;color:rgba(0,0,0,.55)}
+  .dv-card{width:400px;border-radius:14px;box-shadow:0 1px 3px rgba(0,0,0,.1),0 10px 30px rgba(0,0,0,.06);overflow:hidden}
+  .dv-next{margin:22px 0 0;font:12px/1.6 system-ui,sans-serif;color:rgba(0,0,0,.5)}
+  .oid-inline{font:600 10.5px ui-monospace,Menlo,monospace;padding:2px 5px;background:rgba(0,0,0,.08);border-radius:4px;text-decoration:none;color:inherit}
+</style>
+</helmet>
+
+<section class="dv-turn" id="t3">
+  <div class="dv-thd"><a class="dv-tid" href="#t3">3</a><span class="dv-tname">Elevating <a class="oid-inline" href="#2a">2a</a>'s green — richer palette, 3 different marks</span></div>
+  <p class="dv-tsub">Deeper emerald + brass gold instead of sage, for more weight. Also three different mark concepts, not just the coin badge.</p>
+  <div class="dv-opts">
+
+    <div class="dv-opt" id="3a">
+      <div class="dv-olabel"><a class="dv-oid" href="#3a">3a</a>Coin badge, refined — deep emerald + brass</div>
+      <div class="dv-card" style="background:oklch(97% 0.01 100)">
+        <div style="padding:32px 28px 24px;display:flex;flex-direction:column;gap:20px">
+          <div style="display:flex;align-items:center;gap:14px">
+            <div style="width:52px;height:52px;border-radius:50%;background:oklch(25% 0.06 155);display:flex;align-items:center;justify-content:center;flex:none;border:2px solid oklch(65% 0.11 75)">
+              <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:17px;color:oklch(65% 0.11 75)">FB</div>
+            </div>
+            <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:27px;color:oklch(22% 0.05 155);letter-spacing:-0.01em">FamilyBank</div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(25% 0.06 155)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(65% 0.11 75)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(90% 0.02 155)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(97% 0.01 100);border:1px solid rgba(0,0,0,.1)"></div>
+          </div>
+          <div style="background:#fff;border-radius:10px;padding:16px 18px;border:1px solid rgba(0,0,0,.07);display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:32px;height:32px;border-radius:50%;background:oklch(25% 0.06 155);display:flex;align-items:center;justify-content:center;font:600 13px 'Work Sans';color:oklch(65% 0.11 75)">M</div>
+                <div style="font:500 14px 'Work Sans';color:oklch(22% 0.05 155)">Maya</div>
+              </div>
+              <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:17px;color:oklch(25% 0.06 155)">₪128.50</div>
+            </div>
+            <div style="height:1px;background:rgba(0,0,0,.06)"></div>
+            <div style="font:600 12px 'Work Sans';color:oklch(48% 0.09 75);display:flex;align-items:center;gap:6px">Investments <span style="opacity:.5">→</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="dv-opt" id="3b">
+      <div class="dv-olabel"><a class="dv-oid" href="#3b">3b</a>Seal / shield emblem — heraldic, formal</div>
+      <div class="dv-card" style="background:oklch(97% 0.01 100)">
+        <div style="padding:32px 28px 24px;display:flex;flex-direction:column;gap:20px">
+          <div style="display:flex;align-items:center;gap:14px">
+            <div style="width:48px;height:56px;background:oklch(25% 0.06 155);clip-path:polygon(0 0,100% 0,100% 62%,50% 100%,0 62%);display:flex;align-items:center;justify-content:center;flex:none;padding-top:2px">
+              <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:16px;color:oklch(65% 0.11 75)">FB</div>
+            </div>
+            <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:27px;color:oklch(22% 0.05 155);letter-spacing:-0.01em">FamilyBank</div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(25% 0.06 155)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(65% 0.11 75)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(90% 0.02 155)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(97% 0.01 100);border:1px solid rgba(0,0,0,.1)"></div>
+          </div>
+          <div style="background:#fff;border-radius:10px;padding:16px 18px;border:1px solid rgba(0,0,0,.07);display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:32px;height:32px;border-radius:50%;background:oklch(25% 0.06 155);display:flex;align-items:center;justify-content:center;font:600 13px 'Work Sans';color:oklch(65% 0.11 75)">M</div>
+                <div style="font:500 14px 'Work Sans';color:oklch(22% 0.05 155)">Maya</div>
+              </div>
+              <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:17px;color:oklch(25% 0.06 155)">₪128.50</div>
+            </div>
+            <div style="height:1px;background:rgba(0,0,0,.06)"></div>
+            <div style="font:600 12px 'Work Sans';color:oklch(48% 0.09 75);display:flex;align-items:center;gap:6px">Investments <span style="opacity:.5">→</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="dv-opt" id="3c">
+      <div class="dv-olabel"><a class="dv-oid" href="#3c">3c</a>Monogram bars — minimal, no container shape</div>
+      <div class="dv-card" style="background:oklch(97% 0.01 100)">
+        <div style="padding:32px 28px 24px;display:flex;flex-direction:column;gap:20px">
+          <div style="display:flex;align-items:center;gap:16px">
+            <div style="display:flex;align-items:flex-end;gap:4px;flex:none;height:40px">
+              <div style="width:9px;height:20px;background:oklch(25% 0.06 155);border-radius:1px"></div>
+              <div style="width:9px;height:30px;background:oklch(65% 0.11 75);border-radius:1px"></div>
+              <div style="width:9px;height:40px;background:oklch(25% 0.06 155);border-radius:1px"></div>
+            </div>
+            <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:27px;color:oklch(22% 0.05 155);letter-spacing:-0.01em">FamilyBank</div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(25% 0.06 155)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(65% 0.11 75)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(90% 0.02 155)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(97% 0.01 100);border:1px solid rgba(0,0,0,.1)"></div>
+          </div>
+          <div style="background:#fff;border-radius:10px;padding:16px 18px;border:1px solid rgba(0,0,0,.07);display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:32px;height:32px;border-radius:50%;background:oklch(25% 0.06 155);display:flex;align-items:center;justify-content:center;font:600 13px 'Work Sans';color:oklch(65% 0.11 75)">M</div>
+                <div style="font:500 14px 'Work Sans';color:oklch(22% 0.05 155)">Maya</div>
+              </div>
+              <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:17px;color:oklch(25% 0.06 155)">₪128.50</div>
+            </div>
+            <div style="height:1px;background:rgba(0,0,0,.06)"></div>
+            <div style="font:600 12px 'Work Sans';color:oklch(48% 0.09 75);display:flex;align-items:center;gap:6px">Investments <span style="opacity:.5">→</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+  <p class="dv-next">Try next: "go with <a class="oid-inline" href="#3a">3a</a>, build the two screens" · "combine <a class="oid-inline" href="#3b">3b</a>'s mark with <a class="oid-inline" href="#3c">3c</a>'s type" · "even more luxurious"</p>
+</section>
+
+<section class="dv-turn" id="t2">
+  <div class="dv-thd"><a class="dv-tid" href="#t2">2</a><span class="dv-tname">Riffs on <a class="oid-inline" href="#1c">1c</a>'s coin badge, new palettes</span></div>
+  <p class="dv-tsub">Same mark idea — a coin badge with an "FB" monogram — three different color moods.</p>
+  <div class="dv-opts">
+
+    <div class="dv-opt" id="2a">
+      <div class="dv-olabel"><a class="dv-oid" href="#2a">2a</a>Sage &amp; cream — calm, earthy</div>
+      <div class="dv-card" style="background:oklch(97% 0.012 120)">
+        <div style="padding:32px 28px 24px;display:flex;flex-direction:column;gap:20px">
+          <div style="display:flex;align-items:center;gap:14px">
+            <div style="width:52px;height:52px;border-radius:50%;background:oklch(40% 0.06 150);display:flex;align-items:center;justify-content:center;flex:none;border:3px solid oklch(80% 0.1 95)">
+              <div style="font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:17px;color:oklch(80% 0.1 95)">FB</div>
+            </div>
+            <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:26px;color:oklch(28% 0.04 150);letter-spacing:-0.02em">FamilyBank</div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(40% 0.06 150)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(80% 0.1 95)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(88% 0.02 150)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(97% 0.012 120);border:1px solid rgba(0,0,0,.1)"></div>
+          </div>
+          <div style="background:#fff;border-radius:10px;padding:16px 18px;border:1px solid rgba(0,0,0,.07);display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:32px;height:32px;border-radius:50%;background:oklch(40% 0.06 150);display:flex;align-items:center;justify-content:center;font:600 13px 'Work Sans';color:oklch(80% 0.1 95)">M</div>
+                <div style="font:500 14px 'Work Sans';color:oklch(28% 0.04 150)">Maya</div>
+              </div>
+              <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:oklch(40% 0.06 150)">₪128.50</div>
+            </div>
+            <div style="height:1px;background:rgba(0,0,0,.06)"></div>
+            <div style="font:600 12px 'Work Sans';color:oklch(50% 0.09 95);display:flex;align-items:center;gap:6px">Investments <span style="opacity:.5">→</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="dv-opt" id="2b">
+      <div class="dv-olabel"><a class="dv-oid" href="#2b">2b</a>Plum &amp; gold — rich, a little playful</div>
+      <div class="dv-card" style="background:oklch(97% 0.01 320)">
+        <div style="padding:32px 28px 24px;display:flex;flex-direction:column;gap:20px">
+          <div style="display:flex;align-items:center;gap:14px">
+            <div style="width:52px;height:52px;border-radius:50%;background:oklch(35% 0.1 325);display:flex;align-items:center;justify-content:center;flex:none;border:3px solid oklch(78% 0.13 80)">
+              <div style="font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:17px;color:oklch(78% 0.13 80)">FB</div>
+            </div>
+            <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:26px;color:oklch(30% 0.08 325);letter-spacing:-0.02em">FamilyBank</div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(35% 0.1 325)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(78% 0.13 80)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(90% 0.03 325)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(97% 0.01 320);border:1px solid rgba(0,0,0,.1)"></div>
+          </div>
+          <div style="background:#fff;border-radius:10px;padding:16px 18px;border:1px solid rgba(0,0,0,.07);display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:32px;height:32px;border-radius:50%;background:oklch(35% 0.1 325);display:flex;align-items:center;justify-content:center;font:600 13px 'Work Sans';color:oklch(78% 0.13 80)">M</div>
+                <div style="font:500 14px 'Work Sans';color:oklch(30% 0.08 325)">Maya</div>
+              </div>
+              <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:oklch(35% 0.1 325)">₪128.50</div>
+            </div>
+            <div style="height:1px;background:rgba(0,0,0,.06)"></div>
+            <div style="font:600 12px 'Work Sans';color:oklch(52% 0.13 80);display:flex;align-items:center;gap:6px">Investments <span style="opacity:.5">→</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="dv-opt" id="2c">
+      <div class="dv-olabel"><a class="dv-oid" href="#2c">2c</a>Slate &amp; coral — modern, high contrast</div>
+      <div class="dv-card" style="background:oklch(97% 0.003 250)">
+        <div style="padding:32px 28px 24px;display:flex;flex-direction:column;gap:20px">
+          <div style="display:flex;align-items:center;gap:14px">
+            <div style="width:52px;height:52px;border-radius:50%;background:oklch(32% 0.015 250);display:flex;align-items:center;justify-content:center;flex:none;border:3px solid oklch(68% 0.16 30)">
+              <div style="font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:17px;color:oklch(68% 0.16 30)">FB</div>
+            </div>
+            <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:26px;color:oklch(25% 0.01 250);letter-spacing:-0.02em">FamilyBank</div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(32% 0.015 250)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(68% 0.16 30)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(90% 0.005 250)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(97% 0.003 250);border:1px solid rgba(0,0,0,.1)"></div>
+          </div>
+          <div style="background:#fff;border-radius:10px;padding:16px 18px;border:1px solid rgba(0,0,0,.07);display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:32px;height:32px;border-radius:50%;background:oklch(32% 0.015 250);display:flex;align-items:center;justify-content:center;font:600 13px 'Work Sans';color:oklch(68% 0.16 30)">M</div>
+                <div style="font:500 14px 'Work Sans';color:oklch(25% 0.01 250)">Maya</div>
+              </div>
+              <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:oklch(32% 0.015 250)">₪128.50</div>
+            </div>
+            <div style="height:1px;background:rgba(0,0,0,.06)"></div>
+            <div style="font:600 12px 'Work Sans';color:oklch(55% 0.15 30);display:flex;align-items:center;gap:6px">Investments <span style="opacity:.5">→</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+  <p class="dv-next">Try next: "go with <a class="oid-inline" href="#2a">2a</a>, build the two screens" · "try a warmer version of <a class="oid-inline" href="#2c">2c</a>" · "more palettes"</p>
+</section>
+
+<section class="dv-turn" id="t1">
+  <div class="dv-thd"><a class="dv-tid" href="#t1">1</a><span class="dv-tname">Brand directions for FamilyBank</span></div>
+  <p class="dv-tsub">Three directions to react to — each with a mark, a color system, a type pairing, and a mini preview of how it feels in the actual product. Pick one (or mix pieces) and I'll build the parent + kid screens on top of it.</p>
+
+  <div class="dv-opts">
+
+    <div class="dv-opt" id="1a">
+      <div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>Ledger &amp; Trust — warm navy, serif wordmark</div>
+      <div class="dv-card" style="background:oklch(97% 0.01 90)">
+        <div style="padding:32px 28px 24px;display:flex;flex-direction:column;gap:20px">
+          <div style="display:flex;align-items:center;gap:14px">
+            <div style="width:52px;height:52px;border-radius:14px;background:oklch(28% 0.04 260);display:flex;align-items:center;justify-content:center;gap:3px;flex:none">
+              <div style="width:6px;height:14px;border-radius:2px;background:oklch(72% 0.13 80)"></div>
+              <div style="width:6px;height:22px;border-radius:2px;background:oklch(72% 0.13 80)"></div>
+              <div style="width:6px;height:30px;border-radius:2px;background:oklch(72% 0.13 80)"></div>
+            </div>
+            <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:26px;color:oklch(22% 0.02 260);letter-spacing:-0.01em">FamilyBank</div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(28% 0.04 260)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(72% 0.13 80)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(45% 0.07 150)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(97% 0.01 90);border:1px solid rgba(0,0,0,.1)"></div>
+          </div>
+          <div style="font-family:'Source Serif 4',serif;font-size:15px;color:oklch(28% 0.04 260)">Aa — Source Serif 4, for headlines &amp; balances</div>
+          <div style="font-family:Figtree,sans-serif;font-size:14px;color:oklch(22% 0.02 260)">Aa — Figtree, for labels &amp; body copy</div>
+          <div style="background:#fff;border-radius:10px;padding:16px 18px;border:1px solid rgba(0,0,0,.08);display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:32px;height:32px;border-radius:50%;background:oklch(72% 0.13 80);display:flex;align-items:center;justify-content:center;font:600 13px Figtree;color:oklch(22% 0.02 260)">M</div>
+                <div style="font:500 14px Figtree;color:oklch(22% 0.02 260)">Maya</div>
+              </div>
+              <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:17px;color:oklch(28% 0.04 260)">₪128.50</div>
+            </div>
+            <div style="height:1px;background:rgba(0,0,0,.06)"></div>
+            <div style="font:500 12px Figtree;color:oklch(45% 0.07 150);display:flex;align-items:center;gap:6px">Investments <span style="opacity:.5">→</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="dv-opt" id="1b">
+      <div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>Sunrise Savings — terracotta &amp; teal, rounded sans</div>
+      <div class="dv-card" style="background:oklch(97% 0.015 60)">
+        <div style="padding:32px 28px 24px;display:flex;flex-direction:column;gap:20px">
+          <div style="display:flex;align-items:center;gap:14px">
+            <div style="width:52px;height:52px;border-radius:50%;background:oklch(62% 0.15 40);display:flex;align-items:center;justify-content:center;position:relative;flex:none">
+              <div style="width:0;height:0;border-left:9px solid transparent;border-right:9px solid transparent;border-bottom:14px solid oklch(97% 0.015 60);margin-top:-4px"></div>
+              <div style="position:absolute;bottom:14px;width:20px;height:3px;border-radius:2px;background:oklch(97% 0.015 60)"></div>
+            </div>
+            <div style="font-family:Outfit,sans-serif;font-weight:700;font-size:26px;color:oklch(30% 0.05 40);letter-spacing:-0.01em">FamilyBank</div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <div style="width:44px;height:44px;border-radius:10px;background:oklch(62% 0.15 40)"></div>
+            <div style="width:44px;height:44px;border-radius:10px;background:oklch(55% 0.09 190)"></div>
+            <div style="width:44px;height:44px;border-radius:10px;background:oklch(85% 0.06 70)"></div>
+            <div style="width:44px;height:44px;border-radius:10px;background:oklch(97% 0.015 60);border:1px solid rgba(0,0,0,.1)"></div>
+          </div>
+          <div style="font-family:Outfit,sans-serif;font-weight:600;font-size:15px;color:oklch(62% 0.15 40)">Aa — Outfit, for headlines &amp; balances</div>
+          <div style="font-family:Karla,sans-serif;font-size:14px;color:oklch(30% 0.05 40)">Aa — Karla, for labels &amp; body copy</div>
+          <div style="background:#fff;border-radius:14px;padding:16px 18px;border:1px solid rgba(0,0,0,.06);display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:32px;height:32px;border-radius:50%;background:oklch(55% 0.09 190);display:flex;align-items:center;justify-content:center;font:600 13px Karla;color:#fff">M</div>
+                <div style="font:500 14px Karla;color:oklch(30% 0.05 40)">Maya</div>
+              </div>
+              <div style="font-family:Outfit,sans-serif;font-weight:700;font-size:17px;color:oklch(62% 0.15 40)">₪128.50</div>
+            </div>
+            <div style="height:1px;background:rgba(0,0,0,.06)"></div>
+            <div style="font:600 12px Karla;color:oklch(55% 0.09 190);display:flex;align-items:center;gap:6px">Investments <span style="opacity:.5">→</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="dv-opt" id="1c">
+      <div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>Vault Blue — indigo &amp; coin gold, coin badge</div>
+      <div class="dv-card" style="background:oklch(97% 0.005 250)">
+        <div style="padding:32px 28px 24px;display:flex;flex-direction:column;gap:20px">
+          <div style="display:flex;align-items:center;gap:14px">
+            <div style="width:52px;height:52px;border-radius:50%;background:oklch(30% 0.09 265);display:flex;align-items:center;justify-content:center;flex:none;border:3px solid oklch(75% 0.13 85)">
+              <div style="font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:17px;color:oklch(75% 0.13 85)">FB</div>
+            </div>
+            <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:26px;color:oklch(24% 0.05 265);letter-spacing:-0.02em">FamilyBank</div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(30% 0.09 265)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(75% 0.13 85)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(88% 0.03 265)"></div>
+            <div style="width:44px;height:44px;border-radius:8px;background:oklch(97% 0.005 250);border:1px solid rgba(0,0,0,.1)"></div>
+          </div>
+          <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:15px;color:oklch(30% 0.09 265)">Aa — Space Grotesk, for headlines &amp; balances</div>
+          <div style="font-family:'Work Sans',sans-serif;font-size:14px;color:oklch(24% 0.05 265)">Aa — Work Sans, for labels &amp; body copy</div>
+          <div style="background:#fff;border-radius:10px;padding:16px 18px;border:1px solid rgba(0,0,0,.07);display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:32px;height:32px;border-radius:50%;background:oklch(30% 0.09 265);display:flex;align-items:center;justify-content:center;font:600 13px 'Work Sans';color:oklch(75% 0.13 85)">M</div>
+                <div style="font:500 14px 'Work Sans';color:oklch(24% 0.05 265)">Maya</div>
+              </div>
+              <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:oklch(30% 0.09 265)">₪128.50</div>
+            </div>
+            <div style="height:1px;background:rgba(0,0,0,.06)"></div>
+            <div style="font:600 12px 'Work Sans';color:oklch(45% 0.11 85);display:flex;align-items:center;gap:6px">Investments <span style="opacity:.5">→</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+  <p class="dv-next">Try next: "go with <a class="oid-inline" href="#1a">1a</a>, build the two screens" · "mix <a class="oid-inline" href="#1b">1b</a>'s colors with <a class="oid-inline" href="#1c">1c</a>'s mark" · "show more directions"</p>
+</section>
+
+</x-dc>
+</body>
+</html>

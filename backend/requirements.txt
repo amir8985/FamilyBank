@@ -1,0 +1,12 @@
+fastapi>=0.115
+uvicorn[standard]>=0.34
+sqlalchemy>=2.0.36
+asyncpg>=0.31
+alembic>=1.14
+pydantic>=2.10
+pydantic-settings>=2.7
+python-jose[cryptography]>=3.3
+google-auth>=2.37
+requests>=2.32
+httpx>=0.28
+python-dotenv>=1.0

@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+:root {
+  /* Brand — FamilyBank_spec design handoff, "Design Tokens" section */
+  --color-emerald: oklch(25% 0.06 155); /* primary / ink */
+  --color-emerald-dark: oklch(22% 0.05 155);
+  --color-brass: oklch(65% 0.11 75); /* accent */
+  --color-cream: oklch(97% 0.01 100); /* app background */
+  --color-cream-canvas: oklch(93% 0.01 100); /* outer/marketing background */
+  --color-card: #ffffff;
+  --color-muted: oklch(45% 0.03 155);
+  --color-muted-strong: oklch(40% 0.03 155);
+  --color-positive: oklch(48% 0.09 75);
+  --color-negative: oklch(55% 0.15 25);
+
+  --color-tint-emerald: oklch(90% 0.02 155); /* light emerald pill/badge bg */
+  --color-tint-neutral: oklch(94% 0.01 100); /* segmented control track */
+  --color-tint-icon: oklch(90% 0.015 155); /* settings icon circle */
+  --color-tint-dark: oklch(30% 0.05 155); /* text on tint-emerald */
+
+  --color-avatar-amber: oklch(90% 0.05 75);
+  --color-avatar-teal: oklch(88% 0.05 200);
+  --color-avatar-violet: oklch(85% 0.06 300);
+  --color-avatar-rose: oklch(88% 0.07 20);
+  --color-avatar-sky: oklch(88% 0.05 230);
+  --color-avatar-lime: oklch(90% 0.07 130);
+
+  --border-hairline: rgba(0, 0, 0, 0.06);
+  --border-hairline-strong: rgba(0, 0, 0, 0.12);
+}
+
+@theme inline {
+  --color-emerald: var(--color-emerald);
+  --color-emerald-dark: var(--color-emerald-dark);
+  --color-brass: var(--color-brass);
+  --color-cream: var(--color-cream);
+  --color-cream-canvas: var(--color-cream-canvas);
+  --color-card: var(--color-card);
+  --color-muted: var(--color-muted);
+  --color-muted-strong: var(--color-muted-strong);
+  --color-positive: var(--color-positive);
+  --color-negative: var(--color-negative);
+  --color-tint-emerald: var(--color-tint-emerald);
+  --color-tint-neutral: var(--color-tint-neutral);
+  --color-tint-icon: var(--color-tint-icon);
+  --color-tint-dark: var(--color-tint-dark);
+  --color-avatar-amber: var(--color-avatar-amber);
+  --color-avatar-teal: var(--color-avatar-teal);
+  --color-avatar-violet: var(--color-avatar-violet);
+  --color-avatar-rose: var(--color-avatar-rose);
+  --color-avatar-sky: var(--color-avatar-sky);
+  --color-avatar-lime: var(--color-avatar-lime);
+  --color-border-hairline: var(--border-hairline);
+  --color-border-hairline-strong: var(--border-hairline-strong);
+
+  --font-serif: var(--font-source-serif), ui-serif, Georgia, serif;
+  --font-sans: var(--font-work-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+body {
+  background: var(--color-cream-canvas);
+  color: var(--color-emerald-dark);
+  font-family: var(--font-sans);
+}

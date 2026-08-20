@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,600;8..60,700&family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  body{margin:0;background:oklch(93% 0.01 100);font-family:'Work Sans',sans-serif}
+</style>
+</helmet>
+
+<div style="display:flex;flex-wrap:wrap;gap:48px;padding:48px;align-items:flex-start">
+
+  <div style="display:flex;flex-direction:column;gap:14px;align-items:center">
+    <div style="font:600 13px 'Work Sans';color:oklch(35% 0.04 155)">1 · Parent home — balances</div>
+    <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="402,874">
+      <div style="height:100%;display:flex;flex-direction:column;background:oklch(97% 0.01 100)">
+        <div style="padding:58px 20px 8px;display:flex;align-items:center;justify-content:space-between">
+          <div style="display:flex;align-items:center;gap:9px">
+            <div style="width:30px;height:30px;border-radius:50%;background:oklch(25% 0.06 155);display:flex;align-items:center;justify-content:center;border:2px solid oklch(65% 0.11 75)">
+              <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:10.5px;color:oklch(65% 0.11 75)">FB</div>
+            </div>
+            <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:17px;color:oklch(22% 0.05 155)">FamilyBank</div>
+          </div>
+          <div style="width:32px;height:32px;border-radius:50%;background:oklch(90% 0.015 155);display:flex;align-items:center;justify-content:center">
+            <div style="width:14px;height:14px;border-radius:50%;border:2px solid oklch(40% 0.03 155)"></div>
+          </div>
+        </div>
+        <div style="padding:16px 20px 6px">
+          <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:26px;color:oklch(22% 0.05 155);margin-bottom:2px">You owe</div>
+          <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:34px;color:oklch(25% 0.06 155)">₪402.50</div>
+        </div>
+        <div style="flex:1;overflow:auto;padding:14px 20px 24px;display:flex;flex-direction:column;gap:12px">
+
+          <div style="background:#fff;border-radius:16px;padding:16px;border:1px solid rgba(0,0,0,.06);display:flex;flex-direction:column;gap:12px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:38px;height:38px;border-radius:50%;background:oklch(90% 0.05 75);display:flex;align-items:center;justify-content:center;font:600 14px 'Work Sans';color:oklch(30% 0.06 155)">M</div>
+                <div style="font:600 15.5px 'Work Sans';color:oklch(22% 0.05 155)">Maya</div>
+              </div>
+              <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:19px;color:oklch(25% 0.06 155)">₪128.50</div>
+            </div>
+            <div style="display:flex;gap:8px">
+              <div style="flex:1;background:oklch(90% 0.02 155);color:oklch(25% 0.06 155);text-align:center;padding:8px 0;border-radius:8px;font:600 13px 'Work Sans'">+ Add</div>
+              <div style="flex:1;background:oklch(94% 0.01 100);color:oklch(40% 0.03 155);text-align:center;padding:8px 0;border-radius:8px;font:600 13px 'Work Sans';border:1px solid rgba(0,0,0,.06)">– Deduct</div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;border-top:1px solid rgba(0,0,0,.06)">
+              <div style="font:500 13px 'Work Sans';color:oklch(45% 0.03 155)">Portfolio ₪212.30 <span style="color:oklch(48% 0.09 75)">+4.2%</span></div>
+              <div style="font:600 13px 'Work Sans';color:oklch(25% 0.06 155)">Investments →</div>
+            </div>
+          </div>
+
+          <div style="background:#fff;border-radius:16px;padding:16px;border:1px solid rgba(0,0,0,.06);display:flex;flex-direction:column;gap:12px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:38px;height:38px;border-radius:50%;background:oklch(88% 0.05 200);display:flex;align-items:center;justify-content:center;font:600 14px 'Work Sans';color:oklch(30% 0.06 155)">N</div>
+                <div style="font:600 15.5px 'Work Sans';color:oklch(22% 0.05 155)">Noam</div>
+              </div>
+              <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:19px;color:oklch(25% 0.06 155)">₪64.00</div>
+            </div>
+            <div style="display:flex;gap:8px">
+              <div style="flex:1;background:oklch(90% 0.02 155);color:oklch(25% 0.06 155);text-align:center;padding:8px 0;border-radius:8px;font:600 13px 'Work Sans'">+ Add</div>
+              <div style="flex:1;background:oklch(94% 0.01 100);color:oklch(40% 0.03 155);text-align:center;padding:8px 0;border-radius:8px;font:600 13px 'Work Sans';border:1px solid rgba(0,0,0,.06)">– Deduct</div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;border-top:1px solid rgba(0,0,0,.06)">
+              <div style="font:500 13px 'Work Sans';color:oklch(45% 0.03 155)">Portfolio ₪31.00 <span style="color:oklch(55% 0.15 25)">-1.1%</span></div>
+              <div style="font:600 13px 'Work Sans';color:oklch(25% 0.06 155)">Investments →</div>
+            </div>
+          </div>
+
+          <div style="background:#fff;border-radius:16px;padding:16px;border:1px solid rgba(0,0,0,.06);display:flex;flex-direction:column;gap:12px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:38px;height:38px;border-radius:50%;background:oklch(85% 0.06 300);display:flex;align-items:center;justify-content:center;font:600 14px 'Work Sans';color:oklch(30% 0.06 155)">T</div>
+                <div style="font:600 15.5px 'Work Sans';color:oklch(22% 0.05 155)">Tamar</div>
+              </div>
+              <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:19px;color:oklch(25% 0.06 155)">₪210.00</div>
+            </div>
+            <div style="display:flex;gap:8px">
+              <div style="flex:1;background:oklch(90% 0.02 155);color:oklch(25% 0.06 155);text-align:center;padding:8px 0;border-radius:8px;font:600 13px 'Work Sans'">+ Add</div>
+              <div style="flex:1;background:oklch(94% 0.01 100);color:oklch(40% 0.03 155);text-align:center;padding:8px 0;border-radius:8px;font:600 13px 'Work Sans';border:1px solid rgba(0,0,0,.06)">– Deduct</div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;border-top:1px solid rgba(0,0,0,.06)">
+              <div style="font:500 13px 'Work Sans';color:oklch(45% 0.03 155)">Portfolio ₪0.00</div>
+              <div style="font:600 13px 'Work Sans';color:oklch(25% 0.06 155)">Investments →</div>
+            </div>
+          </div>
+
+          <div style="text-align:center;padding:12px;color:oklch(45% 0.03 155);font:600 13.5px 'Work Sans';border:1.5px dashed rgba(0,0,0,.12);border-radius:14px">+ Add a kid</div>
+        </div>
+      </div>
+    </x-import>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:14px;align-items:center">
+    <div style="font:600 13px 'Work Sans';color:oklch(35% 0.04 155)">2 · Add / deduct balance</div>
+    <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="402,874">
+      <div style="height:100%;position:relative;background:oklch(97% 0.01 100)">
+        <div style="position:absolute;inset:0;background:rgba(0,0,0,.35)"></div>
+        <div style="position:absolute;left:0;right:0;bottom:0;background:#fff;border-radius:24px 24px 0 0;padding:22px 22px 28px;display:flex;flex-direction:column;gap:18px;box-shadow:0 -10px 30px rgba(0,0,0,.2)">
+          <div style="width:36px;height:4px;border-radius:2px;background:rgba(0,0,0,.15);align-self:center"></div>
+          <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:20px;color:oklch(22% 0.05 155)">Update Maya's balance</div>
+          <div style="display:flex;background:oklch(94% 0.01 100);border-radius:10px;padding:4px">
+            <div style="flex:1;text-align:center;padding:9px 0;border-radius:8px;background:oklch(25% 0.06 155);color:#fff;font:600 13.5px 'Work Sans'">Add</div>
+            <div style="flex:1;text-align:center;padding:9px 0;border-radius:8px;color:oklch(40% 0.03 155);font:600 13.5px 'Work Sans'">Deduct</div>
+          </div>
+          <div style="text-align:center;padding:18px 0;background:oklch(97% 0.01 100);border-radius:14px">
+            <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:40px;color:oklch(25% 0.06 155)">₪20.00</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <div style="font:600 12px 'Work Sans';color:oklch(45% 0.03 155)">Note (optional)</div>
+            <div style="border:1px solid rgba(0,0,0,.12);border-radius:10px;padding:12px 14px;font:400 14.5px 'Work Sans';color:oklch(22% 0.05 155)">For Wednesday chores</div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font:500 14px 'Work Sans';color:oklch(45% 0.03 155);padding:0 2px">
+            <div>New balance</div>
+            <div style="font-weight:700;color:oklch(25% 0.06 155)">₪148.50</div>
+          </div>
+          <div style="background:oklch(25% 0.06 155);color:#fff;text-align:center;padding:15px 0;border-radius:12px;font:600 15px 'Work Sans'">Confirm</div>
+        </div>
+      </div>
+    </x-import>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:14px;align-items:center">
+    <div style="font:600 13px 'Work Sans';color:oklch(35% 0.04 155)">3 · Kid portfolio</div>
+    <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="402,874">
+      <div style="height:100%;display:flex;flex-direction:column;background:oklch(97% 0.01 100)">
+        <div style="padding:58px 20px 4px;display:flex;align-items:center;gap:10px">
+          <div style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;color:oklch(25% 0.06 155);font-size:18px">‹</div>
+          <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:19px;color:oklch(22% 0.05 155)">Maya's Investments</div>
+        </div>
+        <div style="padding:14px 20px 4px">
+          <div style="font:500 13px 'Work Sans';color:oklch(45% 0.03 155)">Total value</div>
+          <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:32px;color:oklch(25% 0.06 155)">₪230.80</div>
+          <div style="font:600 13px 'Work Sans';color:oklch(48% 0.09 75)">+₪8.90 today (3.9%)</div>
+        </div>
+        <div style="padding:14px 20px 8px;display:flex;background:oklch(94% 0.01 100);margin:8px 20px;border-radius:10px">
+          <div style="flex:1;text-align:center;padding:9px 0;border-radius:8px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.08);color:oklch(25% 0.06 155);font:600 13.5px 'Work Sans'">My Investments</div>
+          <div style="flex:1;text-align:center;padding:9px 0;border-radius:8px;color:oklch(40% 0.03 155);font:600 13.5px 'Work Sans'">Buy</div>
+        </div>
+        <div style="flex:1;overflow:auto;padding:8px 20px 24px;display:flex;flex-direction:column;gap:10px">
+          <div style="background:#fff;border-radius:14px;padding:14px 16px;border:1px solid rgba(0,0,0,.06);display:flex;align-items:center;justify-content:space-between">
+            <div style="display:flex;align-items:center;gap:12px">
+              <div style="width:40px;height:40px;border-radius:10px;background:oklch(90% 0.02 155);display:flex;align-items:center;justify-content:center;font:700 12px 'Work Sans';color:oklch(25% 0.06 155)">AAPL</div>
+              <div>
+                <div style="font:600 15px 'Work Sans';color:oklch(22% 0.05 155)">Apple</div>
+                <div style="font:400 12.5px 'Work Sans';color:oklch(45% 0.03 155)">2 units</div>
+              </div>
+            </div>
+            <div style="text-align:right">
+              <div style="font:600 15px 'Work Sans';color:oklch(22% 0.05 155)">₪212.30</div>
+              <div style="font:600 12.5px 'Work Sans';color:oklch(48% 0.09 75)">+3.1%</div>
+            </div>
+          </div>
+          <div style="background:#fff;border-radius:14px;padding:14px 16px;border:1px solid rgba(0,0,0,.06);display:flex;align-items:center;justify-content:space-between">
+            <div style="display:flex;align-items:center;gap:12px">
+              <div style="width:40px;height:40px;border-radius:10px;background:oklch(90% 0.02 155);display:flex;align-items:center;justify-content:center;font:700 12px 'Work Sans';color:oklch(25% 0.06 155)">VOO</div>
+              <div>
+                <div style="font:600 15px 'Work Sans';color:oklch(22% 0.05 155)">S&amp;P 500 Fund</div>
+                <div style="font:400 12.5px 'Work Sans';color:oklch(45% 0.03 155)">0.4 units</div>
+              </div>
+            </div>
+            <div style="text-align:right">
+              <div style="font:600 15px 'Work Sans';color:oklch(22% 0.05 155)">₪18.50</div>
+              <div style="font:600 12.5px 'Work Sans';color:oklch(55% 0.15 25)">-0.4%</div>
+            </div>
+          </div>
+          <div style="background:#fff;border-radius:14px;padding:14px 16px;border:1px solid rgba(0,0,0,.06);display:flex;align-items:center;justify-content:space-between">
+            <div style="font:500 14px 'Work Sans';color:oklch(45% 0.03 155)">Cash available</div>
+            <div style="font:700 16px 'Work Sans';color:oklch(25% 0.06 155)">₪0.00</div>
+          </div>
+        </div>
+      </div>
+    </x-import>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:14px;align-items:center">
+    <div style="font:600 13px 'Work Sans';color:oklch(35% 0.04 155)">4 · Buy flow</div>
+    <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="402,874">
+      <div style="height:100%;display:flex;flex-direction:column;background:oklch(97% 0.01 100)">
+        <div style="padding:58px 20px 4px;display:flex;align-items:center;gap:10px">
+          <div style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;color:oklch(25% 0.06 155);font-size:18px">‹</div>
+          <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:19px;color:oklch(22% 0.05 155)">Buy AAPL</div>
+        </div>
+        <div style="padding:14px 20px 0">
+          <div style="display:flex;align-items:baseline;justify-content:space-between">
+            <div>
+              <div style="font:600 15px 'Work Sans';color:oklch(22% 0.05 155)">Apple Inc.</div>
+              <div style="font:400 12.5px 'Work Sans';color:oklch(45% 0.03 155)">live price, in $</div>
+            </div>
+            <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:24px;color:oklch(25% 0.06 155)">₪306.20</div>
+          </div>
+          <div style="display:flex;align-items:flex-end;gap:4px;height:56px;margin-top:14px">
+            <div style="flex:1;height:40%;background:oklch(90% 0.02 155);border-radius:2px"></div>
+            <div style="flex:1;height:55%;background:oklch(90% 0.02 155);border-radius:2px"></div>
+            <div style="flex:1;height:35%;background:oklch(90% 0.02 155);border-radius:2px"></div>
+            <div style="flex:1;height:65%;background:oklch(90% 0.02 155);border-radius:2px"></div>
+            <div style="flex:1;height:50%;background:oklch(90% 0.02 155);border-radius:2px"></div>
+            <div style="flex:1;height:80%;background:oklch(65% 0.11 75);border-radius:2px"></div>
+            <div style="flex:1;height:95%;background:oklch(65% 0.11 75);border-radius:2px"></div>
+          </div>
+        </div>
+        <div style="flex:1;overflow:auto;padding:20px 20px 24px;display:flex;flex-direction:column;gap:16px">
+          <div style="display:flex;background:oklch(94% 0.01 100);border-radius:10px;padding:4px">
+            <div style="flex:1;text-align:center;padding:9px 0;border-radius:8px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.08);color:oklch(25% 0.06 155);font:600 13px 'Work Sans'">Amount (₪)</div>
+            <div style="flex:1;text-align:center;padding:9px 0;border-radius:8px;color:oklch(40% 0.03 155);font:600 13px 'Work Sans'">Units</div>
+          </div>
+          <div style="text-align:center;padding:18px 0;background:#fff;border:1px solid rgba(0,0,0,.06);border-radius:14px">
+            <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:36px;color:oklch(25% 0.06 155)">₪122.48</div>
+            <div style="font:500 13px 'Work Sans';color:oklch(45% 0.03 155);margin-top:4px">≈ 0.400 units of AAPL</div>
+          </div>
+          <div style="background:oklch(90% 0.02 155);border-radius:10px;padding:12px 14px;font:400 12.5px/1.5 'Work Sans';color:oklch(30% 0.05 155)">Virtual money, real price. Maya isn't buying real Apple stock — this just tracks what her balance would be worth if she had.</div>
+          <div style="display:flex;justify-content:space-between;font:500 14px 'Work Sans';color:oklch(45% 0.03 155)">
+            <div>Cash available after</div>
+            <div style="font-weight:700;color:oklch(25% 0.06 155)">₪18.52</div>
+          </div>
+          <div style="background:oklch(25% 0.06 155);color:#fff;text-align:center;padding:15px 0;border-radius:12px;font:600 15px 'Work Sans'">Buy for ₪122.48</div>
+        </div>
+      </div>
+    </x-import>
+  </div>
+
+</div>
+
+</x-dc>
+</body>
+</html>

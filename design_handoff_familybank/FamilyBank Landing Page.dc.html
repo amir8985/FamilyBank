@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  body{margin:0;background:oklch(97% 0.01 100);font-family:'Work Sans',sans-serif;color:oklch(22% 0.05 155)}
+  a{color:oklch(25% 0.06 155);text-decoration:none}
+  a:hover{color:oklch(48% 0.09 75)}
+  @media (max-width: 860px){
+    .fb-nav{padding:18px 24px !important}
+    .fb-nav-links{display:none !important}
+    .fb-hero{flex-direction:column !important;padding:56px 24px 64px !important;gap:40px !important}
+    .fb-hero h1{font-size:36px !important}
+    .fb-how{padding:64px 24px !important}
+    .fb-features{grid-template-columns:1fr !important}
+    .fb-safety{padding:56px 24px !important}
+    .fb-footer{padding:28px 24px !important;flex-direction:column;align-items:flex-start !important}
+  }
+</style>
+</helmet>
+
+<div style="display:flex;flex-direction:column;min-height:100vh">
+
+  <nav class="fb-nav" style="display:flex;align-items:center;justify-content:space-between;padding:22px 64px;position:sticky;top:0;background:oklch(97% 0.01 100 / 0.92);backdrop-filter:blur(8px);z-index:10;border-bottom:1px solid rgba(0,0,0,.06)">
+    <div style="display:flex;align-items:center;gap:12px">
+      <div style="width:38px;height:38px;border-radius:50%;background:oklch(25% 0.06 155);display:flex;align-items:center;justify-content:center;border:2px solid oklch(65% 0.11 75)">
+        <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:13px;color:oklch(65% 0.11 75)">FB</div>
+      </div>
+      <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:20px;letter-spacing:-0.01em">FamilyBank</div>
+    </div>
+    <div class="fb-nav-links" style="display:flex;align-items:center;gap:36px;font:500 15px 'Work Sans'">
+      <a href="#how">How it works</a>
+      <a href="#safety">Safety</a>
+      <a href="#faq">FAQ</a>
+    </div>
+    <a href="#start" style="background:oklch(25% 0.06 155);color:oklch(97% 0.01 100);padding:11px 22px;border-radius:8px;font:600 14px 'Work Sans'">Get started</a>
+  </nav>
+
+  <header class="fb-hero" style="display:flex;align-items:center;gap:64px;padding:88px 64px 96px;max-width:1280px;margin:0 auto;width:100%;box-sizing:border-box">
+    <div style="flex:1;display:flex;flex-direction:column;gap:24px;min-width:0">
+      <div style="display:inline-flex;align-items:center;gap:8px;background:oklch(90% 0.02 155);color:oklch(25% 0.06 155);padding:7px 14px;border-radius:20px;font:600 12.5px 'Work Sans';width:fit-content">Virtual money · Real market prices</div>
+      <h1 style="font-family:'Source Serif 4',serif;font-weight:600;font-size:52px;line-height:1.08;margin:0;letter-spacing:-0.01em">A bank your kids will actually want to open.</h1>
+      <p style="font:400 18px/1.6 'Work Sans';color:oklch(38% 0.04 155);margin:0;max-width:480px">Track the allowance you owe each kid, and let them invest it in real stocks and index funds at real prices — with money that always stays play money. No broker, no risk, all the lesson.</p>
+      <div style="display:flex;gap:14px;margin-top:8px">
+        <a id="start" href="#" style="background:oklch(25% 0.06 155);color:oklch(97% 0.01 100);padding:15px 28px;border-radius:9px;font:600 15px 'Work Sans'">Create your family</a>
+        <a href="#how" style="background:transparent;border:1.5px solid oklch(80% 0.02 155);color:oklch(22% 0.05 155);padding:15px 28px;border-radius:9px;font:600 15px 'Work Sans'">See how it works</a>
+      </div>
+    </div>
+
+    <div style="flex:1;display:flex;justify-content:center;min-width:0">
+      <div style="width:340px;display:flex;flex-direction:column;gap:16px">
+        <div style="background:#fff;border-radius:16px;padding:22px;box-shadow:0 20px 50px rgba(0,0,0,.1);border:1px solid rgba(0,0,0,.06)">
+          <div style="font:600 13px 'Work Sans';color:oklch(45% 0.03 155);margin-bottom:14px">You owe</div>
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:34px;height:34px;border-radius:50%;background:oklch(90% 0.05 75);display:flex;align-items:center;justify-content:center;font:600 13px 'Work Sans';color:oklch(30% 0.06 155)">M</div>
+                <div style="font:500 14.5px 'Work Sans'">Maya</div>
+              </div>
+              <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:18px;color:oklch(25% 0.06 155)">₪128.50</div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:34px;height:34px;border-radius:50%;background:oklch(88% 0.05 200);display:flex;align-items:center;justify-content:center;font:600 13px 'Work Sans';color:oklch(30% 0.06 155)">N</div>
+                <div style="font:500 14.5px 'Work Sans'">Noam</div>
+              </div>
+              <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:18px;color:oklch(25% 0.06 155)">₪64.00</div>
+            </div>
+          </div>
+        </div>
+        <div style="background:oklch(25% 0.06 155);border-radius:16px;padding:22px;box-shadow:0 20px 50px rgba(0,0,0,.14)">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px">
+            <div style="font:600 13px 'Work Sans';color:oklch(85% 0.02 155)">Maya's portfolio</div>
+            <div style="font:600 12px 'Work Sans';color:oklch(72% 0.11 75)">+4.2%</div>
+          </div>
+          <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:26px;color:#fff;margin-bottom:14px">₪212.30</div>
+          <div style="display:flex;align-items:flex-end;gap:5px;height:44px">
+            <div style="width:100%;height:40%;background:oklch(40% 0.06 155);border-radius:2px"></div>
+            <div style="width:100%;height:55%;background:oklch(40% 0.06 155);border-radius:2px"></div>
+            <div style="width:100%;height:48%;background:oklch(40% 0.06 155);border-radius:2px"></div>
+            <div style="width:100%;height:70%;background:oklch(65% 0.11 75);border-radius:2px"></div>
+            <div style="width:100%;height:85%;background:oklch(65% 0.11 75);border-radius:2px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <section style="padding:20px 64px;border-top:1px solid rgba(0,0,0,.06);border-bottom:1px solid rgba(0,0,0,.06);background:oklch(94% 0.015 100)">
+    <div style="max-width:1280px;margin:0 auto;display:flex;justify-content:center;gap:56px;flex-wrap:wrap;font:600 14px 'Work Sans';color:oklch(35% 0.04 155)">
+      <div style="display:flex;align-items:center;gap:8px"><div style="width:8px;height:8px;border-radius:50%;background:oklch(65% 0.11 75)"></div>No real broker</div>
+      <div style="display:flex;align-items:center;gap:8px"><div style="width:8px;height:8px;border-radius:50%;background:oklch(65% 0.11 75)"></div>No real money moves</div>
+      <div style="display:flex;align-items:center;gap:8px"><div style="width:8px;height:8px;border-radius:50%;background:oklch(65% 0.11 75)"></div>Real, live market prices</div>
+      <div style="display:flex;align-items:center;gap:8px"><div style="width:8px;height:8px;border-radius:50%;background:oklch(65% 0.11 75)"></div>Parent stays in control</div>
+    </div>
+  </section>
+
+  <section id="how" class="fb-how" style="padding:96px 64px;max-width:1280px;margin:0 auto;width:100%;box-sizing:border-box">
+    <div style="text-align:center;margin-bottom:56px">
+      <h2 style="font-family:'Source Serif 4',serif;font-weight:600;font-size:36px;margin:0 0 12px">How FamilyBank works</h2>
+      <p style="font:400 16px 'Work Sans';color:oklch(40% 0.03 155);margin:0">Three simple pieces, one family ledger.</p>
+    </div>
+    <div class="fb-features" style="display:grid;grid-template-columns:repeat(3,1fr);gap:32px">
+
+      <div style="background:#fff;border-radius:16px;padding:32px;border:1px solid rgba(0,0,0,.06)">
+        <div style="width:44px;height:44px;border-radius:10px;background:oklch(90% 0.02 155);display:flex;align-items:center;justify-content:center;margin-bottom:20px">
+          <div style="display:flex;align-items:flex-end;gap:3px;height:20px"><div style="width:5px;height:10px;background:oklch(25% 0.06 155);border-radius:1px"></div><div style="width:5px;height:16px;background:oklch(25% 0.06 155);border-radius:1px"></div><div style="width:5px;height:20px;background:oklch(25% 0.06 155);border-radius:1px"></div></div>
+        </div>
+        <h3 style="font-family:'Source Serif 4',serif;font-weight:600;font-size:19px;margin:0 0 10px">Track what you owe</h3>
+        <p style="font:400 14.5px/1.6 'Work Sans';color:oklch(40% 0.03 155);margin:0">Add allowance, log chores paid, or dock money for the week — one running balance per kid, with full history.</p>
+      </div>
+
+      <div style="background:#fff;border-radius:16px;padding:32px;border:1px solid rgba(0,0,0,.06)">
+        <div style="width:44px;height:44px;border-radius:10px;background:oklch(90% 0.02 155);display:flex;align-items:center;justify-content:center;margin-bottom:20px">
+          <div style="width:20px;height:20px;border-radius:50%;border:3px solid oklch(25% 0.06 155)"></div>
+        </div>
+        <h3 style="font-family:'Source Serif 4',serif;font-weight:600;font-size:19px;margin:0 0 10px">Invest it, virtually</h3>
+        <p style="font:400 14.5px/1.6 'Work Sans';color:oklch(40% 0.03 155);margin:0">Kids put their balance into real stocks and index funds at real, live prices — and watch it move like the real market, with none of the real risk.</p>
+      </div>
+
+      <div style="background:#fff;border-radius:16px;padding:32px;border:1px solid rgba(0,0,0,.06)">
+        <div style="width:44px;height:44px;border-radius:10px;background:oklch(90% 0.02 155);display:flex;align-items:center;justify-content:center;margin-bottom:20px">
+          <div style="width:22px;height:24px;background:oklch(25% 0.06 155);clip-path:polygon(0 0,100% 0,100% 62%,50% 100%,0 62%)"></div>
+        </div>
+        <h3 style="font-family:'Source Serif 4',serif;font-weight:600;font-size:19px;margin:0 0 10px">Parents stay in charge</h3>
+        <p style="font:400 14.5px/1.6 'Work Sans';color:oklch(40% 0.03 155);margin:0">Only a parent can add money to a kid's balance. Everything else — buying, selling, browsing — is safe to hand over.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <section id="safety" class="fb-safety" style="padding:80px 64px;background:oklch(25% 0.06 155)">
+    <div style="max-width:900px;margin:0 auto;text-align:center;display:flex;flex-direction:column;align-items:center;gap:18px">
+      <div style="width:48px;height:48px;border-radius:50%;background:oklch(65% 0.11 75 / .18);display:flex;align-items:center;justify-content:center;border:2px solid oklch(65% 0.11 75)">
+        <div style="width:16px;height:16px;border-radius:50%;border:3px solid oklch(65% 0.11 75)"></div>
+      </div>
+      <h2 style="font-family:'Source Serif 4',serif;font-weight:600;font-size:30px;color:#fff;margin:0">This is a lesson, not a brokerage.</h2>
+      <p style="font:400 16px/1.7 'Work Sans';color:oklch(85% 0.02 155);margin:0;max-width:620px">Every price your kid sees is real. Every dollar behind it is not. FamilyBank never touches a bank account, never places a real trade, and never moves real money — it's a family ledger with a real-market lesson built in.</p>
+    </div>
+  </section>
+
+  <footer class="fb-footer" style="padding:40px 64px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid rgba(0,0,0,.06);flex-wrap:wrap;gap:16px">
+    <div style="display:flex;align-items:center;gap:10px">
+      <div style="width:28px;height:28px;border-radius:50%;background:oklch(25% 0.06 155);display:flex;align-items:center;justify-content:center;border:1.5px solid oklch(65% 0.11 75)">
+        <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:10px;color:oklch(65% 0.11 75)">FB</div>
+      </div>
+      <div style="font-family:'Source Serif 4',serif;font-weight:600;font-size:15px">FamilyBank</div>
+    </div>
+    <div style="font:400 13.5px 'Work Sans';color:oklch(45% 0.03 155)">© 2026 FamilyBank. Educational tool — not a financial service.</div>
+  </footer>
+
+</div>
+
+</x-dc>
+</body>
+</html>
