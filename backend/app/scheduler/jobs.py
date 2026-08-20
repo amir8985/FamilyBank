@@ -12,9 +12,9 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.currencies import SUPPORTED_CURRENCIES
 from app.core.db import SessionLocal
 from app.models.catalog import AssetCatalog, PriceCache
-from app.models.family import Family
 from app.services import fx_service
 from app.services.investing_service import clear_price_context_cache
 from app.services.price_client import PriceFetchError, fetch_quote
@@ -67,8 +67,11 @@ async def run_refresh() -> None:
             native_currencies = await _refresh_prices(session, client)
             await session.commit()
 
-            base_currencies = set((await session.scalars(select(Family.base_currency))).all())
-            base_currencies.add("USD")  # keep USD<->everything warm regardless of family mix
+            # Every currency the Settings picker offers, not just ones a
+            # family currently uses — otherwise the first family to pick a
+            # currency nobody's used yet has no cached rate to convert
+            # into (the bug that motivated this).
+            base_currencies = set(SUPPORTED_CURRENCIES)
 
             pairs = {
                 (native, base)

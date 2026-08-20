@@ -23,6 +23,20 @@ export type FamilySettings = {
   onboarding_completed: boolean;
 };
 
+export type KidCurrencyPreview = {
+  kid_id: string;
+  name: string;
+  old_cash_balance: string;
+  new_cash_balance: string;
+};
+
+export type CurrencyChangePreviewOut = {
+  from_currency: string;
+  to_currency: string;
+  rate: string;
+  kids: KidCurrencyPreview[];
+};
+
 export type DebtTransactionType = "add" | "deduct";
 
 export type DebtTransactionOut = {

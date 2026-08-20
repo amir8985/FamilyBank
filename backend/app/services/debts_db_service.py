@@ -61,3 +61,26 @@ async def record_transaction(
     session.add(txn)
     await session.flush()
     return txn
+
+
+async def apply_currency_conversion(
+    session: AsyncSession,
+    kid_id: uuid.UUID,
+    from_currency: str,
+    to_currency: str,
+    rate: Decimal,
+) -> DebtTransaction | None:
+    """Called when a family changes its base currency (routes_family.py).
+    Existing rows are never rewritten — each one keeps the nominal amount
+    it was recorded with, preserving history — instead this adds one
+    adjustment row so the running balance (a signed sum of every row,
+    see get_balance) comes out correctly converted. Returns None if the
+    kid's balance was already zero, since an adjustment would be a no-op.
+    """
+    balance = await get_balance(session, kid_id)
+    delta = (balance * rate - balance).quantize(Decimal("0.01"))
+    if delta == 0:
+        return None
+    txn_type = DebtTransactionType.ADD if delta > 0 else DebtTransactionType.DEDUCT
+    note = f"Currency changed: {from_currency} → {to_currency} (rate {rate:.4f})"
+    return await record_transaction(session, kid_id, txn_type, abs(delta), note)
