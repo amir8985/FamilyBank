@@ -148,8 +148,11 @@ Neon instance the user's actual family data lives in. Two consequences:
 
 ## If you're picking up work in a parallel worktree
 
-- Branch off `dev` (or whatever the active integration branch is at the
-  time — check `git branch -a` and ask if unclear), not `master`.
+- `master` is the trunk — branch off it for feature work, merge back into
+  it. There's deliberately no separate long-lived `dev`/staging branch;
+  this project is small enough that the extra layer isn't worth it (see
+  git history around 2026-08-20 if you want the reasoning). Check
+  `git branch -a` if that's changed since this was written.
 - Before calling anything done: run the backend test suite
   (`cd backend && pytest`), the frontend build+lint
   (`npm run build && npm run lint`), and — for anything touching a
