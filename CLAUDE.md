@@ -32,11 +32,25 @@ step size) → per-kid history (general + investment-only) → settings
 frontend `npm run build`/`npm run lint` are clean, and every screen has
 been visually verified against the design handoff.
 
+**Deployed and confirmed working** (signed in and tested live on a phone,
+2026-08-20):
+- Frontend: https://family-bank-nine.vercel.app (Vercel, root directory
+  `frontend`, auto-deploys from `master`)
+- Backend: https://familybank-backend.onrender.com (Render, deployed via
+  `render.yaml` at repo root, auto-deploys from `master`)
+- **`master` is the deploy branch for both.** Pushing to `master` on
+  GitHub redeploys both services automatically. Work on a feature/worker
+  branch and merge to `master` when it's ready to go live — don't expect
+  a `worker-N` branch to be reachable in production until it's merged.
+- Env vars live in each platform's dashboard (Render: service →
+  Environment; Vercel: project → Settings → Environment Variables), not
+  in the repo. If you add a new required env var, you need to add it in
+  both the relevant local `.env`/`.env.local` *and* the dashboard, or
+  production will break silently on next deploy.
+- Render free tier sleeps after 15 min idle — first request after that
+  can take 30-50s. Not a bug if something seems slow after a break.
+
 **Not yet done:**
-- Not deployed anywhere. Runs locally only so far (backend :8001,
-  frontend :3002 — port 8000/3000 are taken locally by unrelated
-  projects on this machine; that's a local quirk, not relevant once
-  deployed).
 - Google OAuth client is still in "Testing" mode (Google Cloud Console)
   — only test users you've explicitly added can sign in. Needs Google's
   verification review before public launch.
@@ -64,22 +78,45 @@ now runs its own in-process scheduler (refreshes prices/FX every 5h
 automatically, logs when it does) — you don't need to manually trigger
 `/internal/refresh` in normal dev, only if you want fresher data sooner.
 
-### The database is real, not a sandbox
+### Database: dev/test branch vs. production
 
-There is no separate dev/test Postgres — everything points at the same
-Neon instance the user's actual family data lives in. Two consequences:
+There are now two separate Neon branches — **use the dev/test one for
+everything except the deployed app itself**:
 
-1. **Never run ad-hoc scripts against the real family** to test
-   buy/sell/debt flows. Use the isolated synthetic test family instead:
+- **Production** (`ep-crimson-wildflower-...`) — only Render's
+  `DATABASE_URL` env var should point at this. Never put it in a local
+  `.env`; you shouldn't need to touch it directly at all.
+- **Dev/test branch** (`ep-purple-mud-...`) — what `backend/.env`
+  points at locally, and what all local/worktree work and the pytest
+  suite should run against. Created as a Neon branch (copy-on-write
+  snapshot) from production, so its schema is current (migrations
+  already applied through 0004 as of this writing) and it happens to
+  contain a *copy* of what was real family data at branch-creation time
+  — that copy is now fully independent of production, so it's fine to
+  modify or delete during testing. If you need the exact connection
+  string, ask the user (it's in `backend/.env`, which is gitignored —
+  never committed) rather than guessing at the hostname.
+
+Within the dev/test branch:
+
+1. **Prefer the isolated synthetic test family** for ad-hoc/manual
+   testing over the copied real-looking one:
    `family_id=00000000-0000-0000-0000-000000000001`,
-   `user_id=00000000-0000-0000-0000-000000000002` (created once, see
-   git history for the setup script). Mint a session JWT for it with
-   `issue_session_token` and test against that.
-2. **The pytest suite is safe to run against this same real DB** — every
-   test runs inside one outer transaction rolled back at teardown
+   `user_id=00000000-0000-0000-0000-000000000002`. Mint a session JWT
+   for it with `issue_session_token` and test against that — keeps your
+   scratch data recognizable and separate from the copied family data.
+2. **The pytest suite is safe to run here** (and would have been safe
+   against production too, for the same reason) — every test runs
+   inside one outer transaction rolled back at teardown
    (`tests/conftest.py`, SQLAlchemy `join_transaction_mode="create_savepoint"`),
-   so nothing persists. This was a deliberate, verified design — see the
-   docstring in `conftest.py`.
+   so nothing persists either way. Documented here mainly so you don't
+   *assume* it's unsafe and avoid running it.
+
+**Every worktree needs its own `backend/.env` / `frontend/.env.local`**
+— they're gitignored, so a fresh worktree checkout won't have them.
+Copy from `.env.example` and fill in the same dev/test `DATABASE_URL`
+(ask the user for it), or copy the values from another already-working
+worktree/checkout.
 
 ## Lessons learned this session (don't reintroduce these)
 
@@ -148,11 +185,31 @@ Neon instance the user's actual family data lives in. Two consequences:
 
 ## If you're picking up work in a parallel worktree
 
-- `master` is the trunk — branch off it for feature work, merge back into
-  it. There's deliberately no separate long-lived `dev`/staging branch;
-  this project is small enough that the extra layer isn't worth it (see
-  git history around 2026-08-20 if you want the reasoning). Check
-  `git branch -a` if that's changed since this was written.
+You're likely one of several parallel Claude sessions, each in its own
+`git worktree` on its own `worker-N` branch, all sharing this one repo's
+history and — importantly — **the one real Neon database** (see "The
+database is real, not a sandbox" above; this matters even more with
+several sessions running at once). A few things specific to that setup:
+
+- `master` is the trunk **and the deploy branch** (see "Deployed and
+  confirmed working" above) — branch off it, merge back into it, and
+  know that merging to `master` redeploys production for everyone.
+  Coordinate before merging if your change touches something another
+  worker is also mid-way through (schema/migrations especially — two
+  workers both adding, say, "0005_*.py" will collide; check
+  `alembic/versions/` for the latest number before naming a new one).
+- Don't assume you're the only session running. If something in the DB
+  looks different from what you expect (an extra migration applied, test
+  data you didn't create), another worker probably did it — check
+  `git log`/recent migrations before assuming it's a bug.
+- Pull `master` before starting and periodically while working, so you
+  merge from a recent base rather than discovering a large conflict at
+  the end.
+- There's deliberately no separate long-lived `dev`/staging branch below
+  `master`; this project is small enough that the extra layer isn't
+  worth it (see git history around 2026-08-20 if you want the
+  reasoning). Check `git branch -a` if that's changed since this was
+  written.
 - Before calling anything done: run the backend test suite
   (`cd backend && pytest`), the frontend build+lint
   (`npm run build && npm run lint`), and — for anything touching a
