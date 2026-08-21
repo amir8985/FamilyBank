@@ -2,7 +2,7 @@ import enum
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import ForeignKey, Numeric
+from sqlalchemy import Boolean, ForeignKey, Numeric
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -35,3 +35,8 @@ class DebtTransaction(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
         SAEnum(DebtTransactionType, name="debt_transaction_type", values_callable=lambda e: [m.value for m in e])
     )
     note: Mapped[str | None] = mapped_column(default=None)
+    # True only for the auto-generated currency-conversion row (see
+    # debts_db_service.apply_currency_conversion) — lets the frontend
+    # render it as a recalculation rather than a real add/deduct, since
+    # nothing was actually given or taken away (history.tsx).
+    is_adjustment: Mapped[bool] = mapped_column(Boolean, default=False)

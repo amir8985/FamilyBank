@@ -18,6 +18,7 @@ class DebtTransactionOut(BaseModel):
     type: DebtTransactionType
     amount: Decimal
     note: str | None
+    is_adjustment: bool
     created_at: datetime
 
 

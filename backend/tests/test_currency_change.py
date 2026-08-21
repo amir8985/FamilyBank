@@ -88,9 +88,9 @@ async def test_conversion_adds_adjustment_row_without_rewriting_history(client, 
 
     rows = await debts_db_service.list_transactions(db_session, kid.id)
     assert len(rows) == 2
-    original = next(r for r in rows if r.note is None)
-    assert original.amount == Decimal("10")  # untouched
-    adjustment = next(r for r in rows if r.note is not None)
+    original = next(r for r in rows if not r.is_adjustment)
+    assert original.amount == Decimal("10") and original.note is None  # untouched
+    adjustment = next(r for r in rows if r.is_adjustment)
     assert adjustment.type == DebtTransactionType.DEDUCT  # 10 -> 9, a decrease
     assert "USD" in adjustment.note and "EUR" in adjustment.note
 

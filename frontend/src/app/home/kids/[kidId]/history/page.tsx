@@ -32,16 +32,25 @@ export default async function KidHistoryPage({
             className="bg-card rounded-2xl px-4 py-3 border border-border-hairline flex items-center justify-between"
           >
             <div>
-              <div className="font-semibold text-[14px] text-emerald-dark capitalize">
-                {t.type === "add" ? "Added" : "Deducted"}
+              <div
+                className={`font-semibold text-[14px] capitalize ${t.is_adjustment ? "text-muted" : "text-emerald-dark"}`}
+              >
+                {t.is_adjustment ? "Currency conversion" : t.type === "add" ? "Added" : "Deducted"}
               </div>
               {t.note && <div className="text-[12px] text-muted mt-0.5">{t.note}</div>}
               <div className="text-[11px] text-muted mt-0.5">{formatDateTime(t.created_at)}</div>
             </div>
-            <div className={`font-semibold text-[15px] ${t.type === "add" ? "text-positive" : "text-negative"}`}>
-              {t.type === "add" ? "+" : "−"}
-              {formatMoney(t.amount, settings.base_currency)}
-            </div>
+            {t.is_adjustment ? (
+              // Not a real add/deduct — nothing was actually given or taken
+              // away, the balance was just recalculated in the new
+              // currency — so no +/- sign and no green/red framing.
+              <div className="font-semibold text-[15px] text-muted">{formatMoney(t.amount, settings.base_currency)}</div>
+            ) : (
+              <div className={`font-semibold text-[15px] ${t.type === "add" ? "text-positive" : "text-negative"}`}>
+                {t.type === "add" ? "+" : "−"}
+                {formatMoney(t.amount, settings.base_currency)}
+              </div>
+            )}
           </div>
         ))}
       </div>

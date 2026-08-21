@@ -56,8 +56,9 @@ async def record_transaction(
     type: DebtTransactionType,
     amount: Decimal,
     note: str | None = None,
+    is_adjustment: bool = False,
 ) -> DebtTransaction:
-    txn = DebtTransaction(kid_id=kid_id, type=type, amount=amount, note=note)
+    txn = DebtTransaction(kid_id=kid_id, type=type, amount=amount, note=note, is_adjustment=is_adjustment)
     session.add(txn)
     await session.flush()
     return txn
@@ -85,4 +86,4 @@ async def apply_currency_conversion(
         return None
     txn_type = DebtTransactionType.ADD if delta > 0 else DebtTransactionType.DEDUCT
     note = f"Currency changed: {from_currency} → {to_currency} (rate {rate:.4f})"
-    return await record_transaction(session, kid_id, txn_type, abs(delta), note)
+    return await record_transaction(session, kid_id, txn_type, abs(delta), note, is_adjustment=True)

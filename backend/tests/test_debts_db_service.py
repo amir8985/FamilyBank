@@ -65,3 +65,12 @@ async def test_list_transactions_returns_both_with_notes(db_session, family):
     )
     rows = await debts_db_service.list_transactions(db_session, kid.id)
     assert {r.note for r in rows} == {"first", "second"}
+
+
+async def test_record_transaction_defaults_to_not_an_adjustment(db_session, family):
+    # is_adjustment is only ever True for the currency-conversion row
+    # apply_currency_conversion writes (see test_currency_change.py) —
+    # a normal parent-entered add/deduct must default to False.
+    kid = await _make_kid(db_session, family)
+    txn = await debts_db_service.record_transaction(db_session, kid.id, DebtTransactionType.ADD, Decimal("5"))
+    assert txn.is_adjustment is False

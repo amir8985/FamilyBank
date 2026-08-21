@@ -44,6 +44,7 @@ export type DebtTransactionOut = {
   type: DebtTransactionType;
   amount: string;
   note: string | null;
+  is_adjustment: boolean;
   created_at: string;
 };
 
