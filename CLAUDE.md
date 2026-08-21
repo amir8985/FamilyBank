@@ -21,16 +21,54 @@ backend/    FastAPI + SQLAlchemy + Postgres (Neon) — see backend/README.md
 frontend/   Next.js 16 (App Router) + Tailwind v4 — see frontend/README.md
 ```
 
-## Status as of 2026-08-20
+## Status as of 2026-08-21
 
 **Built and verified:** the full v1 flow — Google-only sign-in →
 onboarding (currency + first kids) → home (balances, add/deduct) → kid
 portfolio (holdings, since-purchase %, sell) → buy flow (units/amount
 toggle with a live server-computed quote, snapped to a real tradable
 step size) → per-kid history (general + investment-only) → settings
-(currency, kid management). 48 backend tests pass (`cd backend && pytest`),
+(currency, kid management, **real currency conversion with a warning
+dialog** — see below). 62 backend tests pass (`cd backend && pytest`),
 frontend `npm run build`/`npm run lint` are clean, and every screen has
 been visually verified against the design handoff.
+
+**Currency change now actually converts balances, not just relabels
+them (built 2026-08-21).** Previously, switching a family's currency in
+Settings just flipped `base_currency` — a ₪36 debt silently became "$36"
+after switching to USD instead of the correct ~$10, because
+`debt_transactions.amount` has no per-row currency (it's implicitly
+"whatever `family.base_currency` is right now"). Also, the FX rate cache
+only warmed pairs for currencies already in use, so the first family to
+pick a currency nobody had used yet had no rate to convert with. Fixed:
+- `app/core/currencies.py`'s `SUPPORTED_CURRENCIES` (mirrored in
+  `frontend/lib/currencies.ts`) is now what the scheduler keeps warm
+  against USD, not just currently-used currencies — see
+  `scheduler/jobs.py`.
+- `fx_service.get_rate`/`rate_from_table` triangulate through USD when
+  no direct or inverse pair is cached (the scheduler only ever caches
+  X↔USD, never X↔Y directly for two non-USD currencies).
+- On `PATCH /family/settings`, when the currency actually changes,
+  `debts_db_service.apply_currency_conversion` adds **one adjustment
+  row per kid** sized so the balance converts correctly — existing
+  history rows are never rewritten (a deliberate choice: rewriting would
+  lose per-row provenance; an adjustment row keeps the ledger's audit
+  trail intact and is visible in the kid's history with a note
+  explaining what happened). Investment holdings needed no equivalent
+  fix — they already store their own currency and convert at read time.
+- New `GET /family/settings/currency-preview?to=XXX` backs a
+  confirmation dialog (`currency-change-sheet.tsx`) that shows each
+  kid's real old→new balance before the parent commits — this is
+  presented as a rare, deliberate action, not a silent instant switch.
+- **Known limitation, not addressed:** no row locking on the family
+  during the conversion. Two concurrent `PATCH /family/settings` calls
+  for the same family (e.g. two devices open to Settings at once) could
+  both read the old currency before either commits and double-apply the
+  conversion. Low blast radius (a parent would notice and could just
+  change currency again) and no other write path in this codebase locks
+  rows either, so this was left as-is rather than adding
+  `SELECT ... FOR UPDATE` for a rare, human-paced action — but worth
+  knowing if this ever needs to become bulletproof.
 
 **Deployed and confirmed working** (signed in and tested live on a phone,
 2026-08-20):
@@ -156,6 +194,18 @@ worktree/checkout.
   — never stored redundantly. Buy/sell write debt_transaction rows too
   (so the ledger is one source of truth); this is why you'll see
   `debts_db_service` imported from `investing_service`.
+- **The FX cache only ever stores X↔USD pairs** (see `scheduler/jobs.py`)
+  — never a direct pair between two non-USD currencies. Any code that
+  converts between two arbitrary currencies must triangulate through
+  USD (`fx_service.get_rate`/`rate_from_table` already do this); a naive
+  direct-or-inverse-only lookup will raise/return `None` for a pair like
+  EUR→ILS even though both convert fine individually via USD.
+- **A DB column with no per-row currency field** (like
+  `debt_transactions.amount`) is implicitly "whatever the family's
+  currency is right now" — changing that currency without also writing
+  a conversion adjustment silently corrupts every existing amount's
+  real-world meaning. If you add another currency-denominated column
+  without its own currency field, it has the same trap.
 
 ## Architecture quick-reference
 

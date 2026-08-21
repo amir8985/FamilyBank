@@ -75,7 +75,9 @@ async def apply_currency_conversion(
     it was recorded with, preserving history — instead this adds one
     adjustment row so the running balance (a signed sum of every row,
     see get_balance) comes out correctly converted. Returns None if the
-    kid's balance was already zero, since an adjustment would be a no-op.
+    converted balance doesn't change (a zero balance, or a rate close
+    enough to 1 that the delta rounds to nothing), since an adjustment
+    row would be a no-op.
     """
     balance = await get_balance(session, kid_id)
     delta = (balance * rate - balance).quantize(Decimal("0.01"))

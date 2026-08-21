@@ -20,7 +20,8 @@ router = APIRouter(prefix="/family", tags=["family"])
 # after the fix in scheduler/jobs.py, but the change must never silently
 # go through with the wrong balances if it somehow happens).
 _RATE_UNAVAILABLE_DETAIL = (
-    "Exchange rate not available yet for this currency — try again in a few minutes."
+    "Exchange rate not available yet for this currency — rates update a few times a day, "
+    "so please try again later."
 )
 
 
@@ -74,9 +75,9 @@ async def preview_currency_change(
     db: AsyncSession = Depends(get_db),
 ) -> CurrencyChangePreviewOut:
     """Powers the warning dialog: shows each kid's balance converted at
-    today's rate *before* the parent commits to the change (spec ask —
-    changing currency is rare and destructive enough that a silent,
-    unexplained switch isn't acceptable)."""
+    today's rate *before* the parent commits to the change — changing
+    currency is rare and easy to get wrong silently, so the frontend
+    shows this instead of an unexplained instant switch."""
     to_currency = _validated_currency(to)
     if to_currency == family.base_currency:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Already using that currency")
@@ -87,15 +88,16 @@ async def preview_currency_change(
         raise HTTPException(status.HTTP_409_CONFLICT, _RATE_UNAVAILABLE_DETAIL) from exc
 
     kids = (await db.scalars(select(Kid).where(Kid.family_id == family.id).order_by(Kid.created_at))).all()
-    kid_previews = []
-    for kid in kids:
-        old_balance = await debts_db_service.get_balance(db, kid.id)
-        new_balance = (old_balance * rate).quantize(Decimal("0.01"))
-        kid_previews.append(
-            KidCurrencyPreview(
-                kid_id=kid.id, name=kid.name, old_cash_balance=old_balance, new_cash_balance=new_balance
-            )
+    balances = await debts_db_service.get_balances(db, [kid.id for kid in kids])
+    kid_previews = [
+        KidCurrencyPreview(
+            kid_id=kid.id,
+            name=kid.name,
+            old_cash_balance=balances[kid.id],
+            new_cash_balance=(balances[kid.id] * rate).quantize(Decimal("0.01")),
         )
+        for kid in kids
+    ]
 
     return CurrencyChangePreviewOut(
         from_currency=family.base_currency, to_currency=to_currency, rate=rate, kids=kid_previews

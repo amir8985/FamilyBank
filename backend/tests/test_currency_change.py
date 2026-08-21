@@ -174,6 +174,11 @@ async def test_preview_same_currency_rejected(client, auth_headers):
     assert resp.status_code == 400
 
 
+async def test_preview_unsupported_currency_rejected(client, auth_headers):
+    resp = await client.get("/family/settings/currency-preview?to=XYZ", headers=auth_headers)
+    assert resp.status_code == 422
+
+
 async def test_investment_value_reprices_automatically_after_currency_change(
     client, db_session, family, auth_headers, seeded_asset
 ):
