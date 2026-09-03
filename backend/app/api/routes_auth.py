@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,6 +46,7 @@ async def sync_google_session(
                 email=email,
                 google_sub=google_sub,
                 name=claims.get("name"),
+                consent_accepted_at=datetime.now(timezone.utc),
             )
             db.add(user)
             await db.flush()

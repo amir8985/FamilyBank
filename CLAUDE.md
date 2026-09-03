@@ -52,10 +52,19 @@ been visually verified against the design handoff.
 
 **Not yet done:**
 - Google OAuth client is still in "Testing" mode (Google Cloud Console)
-  — only test users you've explicitly added can sign in. Needs Google's
-  verification review before public launch.
-- Children's-data privacy policy — flagged in spec 4.2 as a pre-launch
-  requirement, not needed to keep building.
+  — only test users you've explicitly added can sign in. The app only
+  requests non-sensitive scopes (`openid email profile`, NextAuth's
+  Google provider default — see `frontend/src/auth.ts`), so publishing
+  should just require filling in the consent screen (privacy policy /
+  terms links now exist, see below) and clicking Publish — not a lengthy
+  manual verification review. Still needs the user to actually do this
+  in Google Cloud Console.
+- ~~Children's-data privacy policy~~ — done as of 2026-09-03: see
+  `/privacy` and `/terms` pages, a consent checkbox gating sign-in
+  (`components/sign-in-button.tsx`), and a `consent_accepted_at` stamp
+  on the `users` row (migration `0009`, set in `routes_auth.py` on
+  first sign-in). NULL on that column means "predates this feature,"
+  not "declined" — it isn't backfilled for existing accounts.
 - See `TODO.txt` at repo root for the user's own running feature-idea
   list (currency-change UX, pocket money, safety, co-parent sharing,
   native app, kid login, multi-kid competitions). That file is
@@ -86,16 +95,19 @@ everything except the deployed app itself**:
 - **Production** (`ep-crimson-wildflower-...`) — only Render's
   `DATABASE_URL` env var should point at this. Never put it in a local
   `.env`; you shouldn't need to touch it directly at all.
-- **Dev/test branch** (`ep-purple-mud-...`) — what `backend/.env`
-  points at locally, and what all local/worktree work and the pytest
-  suite should run against. Created as a Neon branch (copy-on-write
-  snapshot) from production, so its schema is current (migrations
-  already applied through 0004 as of this writing) and it happens to
-  contain a *copy* of what was real family data at branch-creation time
-  — that copy is now fully independent of production, so it's fine to
-  modify or delete during testing. If you need the exact connection
-  string, ask the user (it's in `backend/.env`, which is gitignored —
-  never committed) rather than guessing at the hostname.
+- **Dev/test branch** (`ep-autumn-violet-...` as of 2026-09-03 — the
+  user recreated this branch that day; an earlier `ep-purple-mud-...`
+  branch is what older sessions/history refer to, but its credentials
+  no longer work, so don't assume that hostname is current) — what
+  `backend/.env` points at locally, and what all local/worktree work and
+  the pytest suite should run against. A Neon branch (copy-on-write
+  snapshot), so it's fine to modify or delete during testing. If you
+  need the exact connection string, ask the user (it's in `backend/.env`,
+  which is gitignored — never committed) rather than guessing at the
+  hostname — and note the URL Neon's dashboard gives you needs adjusting
+  for this project: swap `postgresql://` for `postgresql+asyncpg://`,
+  and drop `sslmode=`/`channel_binding=` query params (asyncpg doesn't
+  accept them the way psycopg2 does).
 
 Within the dev/test branch:
 
@@ -227,6 +239,22 @@ If a fourth worktree gets created later, pick the next port pair
   worker is also mid-way through (schema/migrations especially — two
   workers both adding, say, "0005_*.py" will collide; check
   `alembic/versions/` for the latest number before naming a new one).
+  This isn't hypothetical — it happened on 2026-09-03: worker-3 had
+  0005-0008 committed locally (not yet in `master`) and already applied
+  to the shared dev/test branch, while worker-2 had independently
+  written its own 0005. Resolution: message the other session directly
+  (`ListAgents`/`SendMessage` — they're interactive Claude sessions on
+  the same machine, not black boxes) to confirm what's actually applied
+  vs. still in flight, rename your migration to sit after theirs
+  (down_revision pointing at their real head), then to actually run
+  `alembic upgrade head` locally you need their migration *files*
+  physically present (Alembic needs the whole chain on disk to resolve
+  revisions, even though it won't re-run already-applied ones) — copy
+  them in from their worktree, run your migration, then delete the
+  copies again so your branch's diff stays just your own file. Their
+  migrations still need to land in `master` before yours can merge
+  cleanly (down_revision references a revision `master` doesn't have
+  yet).
 - Don't assume you're the only session running. If something in the DB
   looks different from what you expect (an extra migration applied, test
   data you didn't create), another worker probably did it — check

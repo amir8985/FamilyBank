@@ -157,7 +157,11 @@ export default async function LandingPage() {
 
       <footer className="px-6 md:px-16 py-10 flex items-center justify-between border-t border-border-hairline flex-wrap gap-4">
         <Logo size={28} />
-        <div className="text-[13.5px] text-muted">© 2026 FamilyBank. Educational tool — not a financial service.</div>
+        <div className="flex items-center gap-5 text-[13.5px]">
+          <a href="/privacy" className="text-muted hover:text-brass">Privacy Policy</a>
+          <a href="/terms" className="text-muted hover:text-brass">Terms of Service</a>
+          <div className="text-muted">© 2026 FamilyBank. Educational tool — not a financial service.</div>
+        </div>
       </footer>
     </div>
   );
