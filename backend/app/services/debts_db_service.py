@@ -4,6 +4,7 @@ never stored redundantly, so buy/sell (which also write rows here) can
 never drift out of sync with it.
 """
 
+import re
 import uuid
 from decimal import Decimal
 from typing import NamedTuple
@@ -12,6 +13,24 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.debt_transaction import DebtTransaction, DebtTransactionType
+
+_NOTE_CURRENCY_CHANGE_RE = re.compile(r"^Currency changed: (\w+) → (\w+)")
+
+
+def _adjustment_currencies(txn: DebtTransaction) -> tuple[str, str] | None:
+    """The from/to currency for an is_adjustment row. Falls back to
+    parsing the note for rows written before the from_currency/to_currency
+    columns existed (migration 0006) — those rows have both columns NULL
+    forever, since old data is never backfilled by adding a column with
+    no default. Returns None only if even that fails, which should never
+    happen for a row this codebase generated itself."""
+    if txn.from_currency and txn.to_currency:
+        return txn.from_currency, txn.to_currency
+    if txn.note:
+        match = _NOTE_CURRENCY_CHANGE_RE.match(txn.note)
+        if match:
+            return match.group(1), match.group(2)
+    return None
 
 
 def _signed_amount():
@@ -78,7 +97,8 @@ async def list_transactions_with_currency(
     rows_asc = list(reversed(rows_desc))
 
     first_adjustment = next((r for r in rows_asc if r.is_adjustment), None)
-    currency = first_adjustment.from_currency if first_adjustment else current_currency
+    first_parsed = _adjustment_currencies(first_adjustment) if first_adjustment else None
+    currency = first_parsed[0] if first_parsed else current_currency
 
     balance = Decimal("0.00")
     annotated: list[AnnotatedTransaction] = []
@@ -86,7 +106,8 @@ async def list_transactions_with_currency(
         previous_currency = currency
         balance_before = balance
         if txn.is_adjustment:
-            currency = txn.to_currency
+            parsed = _adjustment_currencies(txn)
+            currency = parsed[1] if parsed else current_currency
         signed = txn.amount if txn.type == DebtTransactionType.ADD else -txn.amount
         balance = balance + signed
         annotated.append(AnnotatedTransaction(txn, currency, previous_currency, balance_before, balance))

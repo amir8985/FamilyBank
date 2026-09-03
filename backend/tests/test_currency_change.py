@@ -251,3 +251,35 @@ async def test_history_shows_each_row_in_the_currency_it_was_actually_recorded_i
     assert adjustment["previous_currency"] == "EUR"
     assert adjustment["balance_before"] == "200.00"  # 200 EUR
     assert adjustment["balance_after"] == "700.00"  # 200 EUR -> 700 ILS at rate 3.5
+
+
+async def test_history_falls_back_to_parsing_the_note_for_pre_migration_adjustment_rows(
+    client, db_session, family, auth_headers
+):
+    """The real bug this regression-guards: migration 0006 added
+    from_currency/to_currency but can't backfill data it never captured,
+    so any is_adjustment row written before it has both columns NULL
+    forever unless migration 0007's backfill reaches it. This simulates
+    a database migration 0007 hasn't (yet) reached — GET .../debt must
+    still degrade gracefully via note-parsing, not 500."""
+    kid = await _make_kid(db_session, family)
+    await _fund_in_the_past(kid=kid, db_session=db_session, amount="100")
+    old_style_adjustment = DebtTransaction(
+        kid_id=kid.id,
+        type=DebtTransactionType.ADD,
+        amount=Decimal("250.00"),
+        note="Currency changed: USD → ILS (rate 3.5000)",
+        is_adjustment=True,
+        from_currency=None,  # as if written before migration 0006
+        to_currency=None,
+    )
+    db_session.add(old_style_adjustment)
+    family.base_currency = "ILS"
+    await db_session.flush()
+
+    resp = await client.get(f"/kids/{kid.id}/debt", headers=auth_headers)
+    assert resp.status_code == 200
+    rows = {r["is_adjustment"]: r for r in resp.json()}
+    assert rows[False]["currency"] == "USD"
+    assert rows[True]["currency"] == "ILS"
+    assert rows[True]["previous_currency"] == "USD"
