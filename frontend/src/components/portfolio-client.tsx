@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { TickerBadge } from "@/components/ui/ticker-badge";
 import { SegmentedControl } from "@/components/ui/segmented-control";
+import { Money } from "@/components/ui/money";
 import { formatMoney, formatPct, trimUnits } from "@/lib/format";
 import type { AssetOut, PortfolioOut } from "@/lib/types";
 
@@ -48,7 +49,7 @@ export function PortfolioClient({
       <div className="px-5 pt-3.5 pb-1">
         <div className="text-[13px] font-medium text-muted">Cash available</div>
         <div className="font-serif font-semibold text-[32px] text-emerald">
-          {formatMoney(portfolio.cash_available, currency)}
+          <Money amount={portfolio.cash_available} currency={currency} />
         </div>
         <div className="flex items-baseline gap-1.5 mt-1">
           <span className="text-[14px] font-medium text-muted-strong">

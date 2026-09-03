@@ -9,6 +9,16 @@ it when you finish a session of meaningful work (especially if you hit
 and fixed a real bug — the "Lessons learned" section exists so the next
 session doesn't reintroduce it).
 
+## Talking to the user
+
+The user does not read most of a long response, especially not the
+opening — skims are the default, not the exception. So: end every
+response (not just this file's own updates) with a short, plain-language
+summary of what actually matters — what changed, what's blocked, what
+needs a decision from them, what to do next. Put it last, after the
+detailed work, not only at the top. Don't rely on them having read the
+play-by-play above it.
+
 ## What this is
 
 Parents track allowance/debt owed to their kids; kids "invest" that

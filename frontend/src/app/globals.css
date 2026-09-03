@@ -10,13 +10,14 @@
   --color-card: #ffffff;
   --color-muted: oklch(45% 0.03 155);
   --color-muted-strong: oklch(40% 0.03 155);
-  --color-positive: oklch(48% 0.09 75);
+  --color-positive: oklch(48% 0.13 155); /* green (was amber/brass in the original handoff) */
   --color-negative: oklch(55% 0.15 25);
 
   --color-tint-emerald: oklch(90% 0.02 155); /* light emerald pill/badge bg */
   --color-tint-neutral: oklch(94% 0.01 100); /* segmented control track */
   --color-tint-icon: oklch(90% 0.015 155); /* settings icon circle */
   --color-tint-dark: oklch(30% 0.05 155); /* text on tint-emerald */
+  --color-tint-negative: oklch(92% 0.045 25); /* light red pill bg, e.g. Deduct */
 
   --color-avatar-amber: oklch(90% 0.05 75);
   --color-avatar-teal: oklch(88% 0.05 200);
@@ -44,6 +45,7 @@
   --color-tint-neutral: var(--color-tint-neutral);
   --color-tint-icon: var(--color-tint-icon);
   --color-tint-dark: var(--color-tint-dark);
+  --color-tint-negative: var(--color-tint-negative);
   --color-avatar-amber: var(--color-avatar-amber);
   --color-avatar-teal: var(--color-avatar-teal);
   --color-avatar-violet: var(--color-avatar-violet);

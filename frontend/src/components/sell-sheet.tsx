@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
+import { Money } from "@/components/ui/money";
 import { api, ApiError } from "@/lib/api";
 import { defaultUnitStep, formatMoney, trimUnits } from "@/lib/format";
 import type { HoldingOut, InvestmentTransactionOut } from "@/lib/types";
@@ -85,7 +86,7 @@ export function SellSheet({
             aria-label="Fewer units"
             disabled={units <= step}
             onClick={() => adjust(-1)}
-            className="w-9 h-9 rounded-full bg-tint-emerald text-emerald text-[20px] font-bold flex items-center justify-center disabled:opacity-30 cursor-pointer"
+            className="w-11 h-11 rounded-full bg-tint-emerald text-emerald text-[20px] font-bold flex items-center justify-center disabled:opacity-30 cursor-pointer"
           >
             −
           </button>
@@ -100,7 +101,7 @@ export function SellSheet({
             aria-label="More units"
             disabled={units >= totalUnits}
             onClick={() => adjust(1)}
-            className="w-9 h-9 rounded-full bg-tint-emerald text-emerald text-[20px] font-bold flex items-center justify-center disabled:opacity-30 cursor-pointer"
+            className="w-11 h-11 rounded-full bg-tint-emerald text-emerald text-[20px] font-bold flex items-center justify-center disabled:opacity-30 cursor-pointer"
           >
             +
           </button>
@@ -116,7 +117,7 @@ export function SellSheet({
 
       <div className="text-center py-[18px] bg-cream rounded-2xl">
         <div className="font-serif font-semibold text-[32px] text-emerald">
-          {formatMoney(proceeds, currency)}
+          <Money amount={proceeds} currency={currency} />
         </div>
         <div className="text-[13px] font-medium text-muted mt-1">estimated proceeds</div>
       </div>
@@ -132,7 +133,7 @@ export function SellSheet({
         type="button"
         disabled={submitting || !valid}
         onClick={handleConfirm}
-        className="bg-emerald text-white text-center py-[15px] rounded-xl text-[15px] font-semibold disabled:opacity-50 cursor-pointer"
+        className="bg-emerald text-white text-center min-h-11 py-[15px] rounded-xl text-[15px] font-semibold disabled:opacity-50 cursor-pointer"
       >
         {submitting ? "Selling…" : `Sell for ${formatMoney(proceeds, currency)}`}
       </button>

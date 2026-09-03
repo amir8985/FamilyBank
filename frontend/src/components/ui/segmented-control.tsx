@@ -6,12 +6,13 @@ export function SegmentedControl<T extends string>({
   onChange,
   variant = "card",
 }: {
-  options: { value: T; label: string }[];
+  options: { value: T; label: string; activeClassName?: string }[];
   value: T;
   onChange: (value: T) => void;
   /** "card": white shadowed pill (tabs, amount/units). "filled": solid
    * emerald pill (add/deduct) — matches the two distinct styles in the
-   * design handoff. */
+   * design handoff. An option's own `activeClassName` overrides this
+   * (e.g. Deduct going red instead of emerald when selected). */
   variant?: "card" | "filled";
 }) {
   const activeClass =
@@ -26,8 +27,8 @@ export function SegmentedControl<T extends string>({
           key={opt.value}
           type="button"
           onClick={() => onChange(opt.value)}
-          className={`flex-1 text-center py-2.5 rounded-lg text-[13.5px] font-semibold transition-colors cursor-pointer ${
-            opt.value === value ? activeClass : "text-muted-strong"
+          className={`flex-1 min-h-11 text-center py-2.5 rounded-lg text-[13.5px] font-semibold transition-colors cursor-pointer ${
+            opt.value === value ? (opt.activeClassName ?? activeClass) : "text-muted-strong"
           }`}
         >
           {opt.label}

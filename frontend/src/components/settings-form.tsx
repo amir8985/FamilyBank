@@ -82,7 +82,7 @@ export function SettingsForm({
           type="button"
           disabled={saving || currency === currentCurrency}
           onClick={handleSave}
-          className="bg-emerald text-white text-center py-[13px] rounded-xl text-[14px] font-semibold disabled:opacity-50 cursor-pointer mt-1"
+          className="bg-emerald text-white text-center min-h-11 py-[13px] rounded-xl text-[14px] font-semibold disabled:opacity-50 cursor-pointer mt-1"
         >
           {saving ? "Saving…" : "Save currency"}
         </button>
@@ -114,7 +114,7 @@ export function SettingsForm({
         <button
           type="button"
           onClick={() => setAddKidOpen(true)}
-          className="text-center p-3 text-muted font-semibold text-[13.5px] border-[1.5px] border-dashed border-border-hairline-strong rounded-2xl cursor-pointer"
+          className="text-center min-h-11 p-3 text-muted font-semibold text-[13.5px] border-[1.5px] border-dashed border-border-hairline-strong rounded-2xl cursor-pointer"
         >
           + Add a kid
         </button>
@@ -140,7 +140,7 @@ export function SettingsForm({
                 setResetting(false);
               }
             }}
-            className="text-center py-3 rounded-xl text-[13.5px] font-semibold border border-negative text-negative disabled:opacity-50 cursor-pointer"
+            className="text-center min-h-11 py-3 rounded-xl text-[13.5px] font-semibold border border-negative text-negative disabled:opacity-50 cursor-pointer"
           >
             {resetting ? "Resetting…" : "Reset to onboarding (dev only)"}
           </button>

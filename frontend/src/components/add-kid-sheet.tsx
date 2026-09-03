@@ -53,7 +53,7 @@ export function AddKidSheet({ onClose }: { onClose: () => void }) {
         type="button"
         disabled={submitting || !name.trim()}
         onClick={handleConfirm}
-        className="bg-emerald text-white text-center py-[15px] rounded-xl text-[15px] font-semibold disabled:opacity-50 cursor-pointer"
+        className="bg-emerald text-white text-center min-h-11 py-[15px] rounded-xl text-[15px] font-semibold disabled:opacity-50 cursor-pointer"
       >
         {submitting ? "Adding…" : "Add kid"}
       </button>

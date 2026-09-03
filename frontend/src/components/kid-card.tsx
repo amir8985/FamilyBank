@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Avatar } from "@/components/ui/avatar";
+import { Money } from "@/components/ui/money";
 import { formatMoney, formatPct } from "@/lib/format";
 import type { KidSummary } from "@/lib/types";
 
@@ -27,22 +28,22 @@ export function KidCard({
           <span className="font-semibold text-[15.5px] text-emerald-dark">{kid.name}</span>
         </div>
         <span className="font-serif font-semibold text-[19px] text-emerald">
-          {formatMoney(kid.cash_balance, currency)}
+          <Money amount={kid.cash_balance} currency={currency} />
         </span>
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex gap-2.5">
         <button
           type="button"
           onClick={onAdd}
-          className="flex-1 bg-tint-emerald text-emerald text-center py-2 rounded-lg text-[13px] font-semibold cursor-pointer"
+          className="flex-1 min-h-11 bg-tint-emerald text-emerald text-center py-[11px] rounded-lg text-[13px] font-semibold cursor-pointer"
         >
           + Add
         </button>
         <button
           type="button"
           onClick={onDeduct}
-          className="flex-1 bg-tint-neutral text-muted-strong text-center py-2 rounded-lg text-[13px] font-semibold border border-border-hairline cursor-pointer"
+          className="flex-1 min-h-11 bg-tint-negative text-negative text-center py-[11px] rounded-lg text-[13px] font-semibold border border-negative/20 cursor-pointer"
         >
           – Deduct
         </button>
@@ -55,7 +56,7 @@ export function KidCard({
             <span className={isPositive ? "text-positive" : "text-negative"}> {dayChangePct}</span>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4">
           <Link href={`/home/kids/${kid.id}/history`} className="text-[13px] font-semibold text-muted-strong">
             History
           </Link>

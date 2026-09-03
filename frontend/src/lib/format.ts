@@ -33,6 +33,38 @@ export function trimUnits(units: string | number): string {
   return value.toString();
 }
 
+/** Splits a formatted amount around its currency symbol, so callers can
+ * render the symbol in a different font than the numeral — needed
+ * because Source Serif 4 (the numeral font) lacks a proper ₪ glyph and
+ * falls back to a mismatched system serif on Android. */
+export function formatMoneyParts(
+  amount: string | number,
+  currency: string
+): { before: string; symbol: string; after: string } {
+  const value = typeof amount === "string" ? Number(amount) : amount;
+  try {
+    const parts = new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+      currencyDisplay: "symbol",
+    }).formatToParts(value);
+    const symbolIndex = parts.findIndex((p) => p.type === "currency");
+    return {
+      before: parts
+        .slice(0, symbolIndex)
+        .map((p) => p.value)
+        .join(""),
+      symbol: parts[symbolIndex]?.value ?? currency,
+      after: parts
+        .slice(symbolIndex + 1)
+        .map((p) => p.value)
+        .join(""),
+    };
+  } catch {
+    return { before: "", symbol: currency, after: ` ${value.toFixed(2)}` };
+  }
+}
+
 export function currencySymbol(currency: string): string {
   try {
     const parts = new Intl.NumberFormat("en-US", {

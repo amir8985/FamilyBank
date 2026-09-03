@@ -59,7 +59,9 @@ export default async function LandingPage() {
                     </div>
                     <div className="text-[14.5px] font-medium">Maya</div>
                   </div>
-                  <div className="font-serif font-semibold text-[18px] text-emerald">₪128.50</div>
+                  <div className="font-serif font-semibold text-[18px] text-emerald">
+                    <span className="font-sans">₪</span>128.50
+                  </div>
                 </div>
                 <div className="flex justify-between items-center">
                   <div className="flex items-center gap-2.5">
@@ -68,7 +70,9 @@ export default async function LandingPage() {
                     </div>
                     <div className="text-[14.5px] font-medium">Noam</div>
                   </div>
-                  <div className="font-serif font-semibold text-[18px] text-emerald">₪64.00</div>
+                  <div className="font-serif font-semibold text-[18px] text-emerald">
+                    <span className="font-sans">₪</span>64.00
+                  </div>
                 </div>
               </div>
             </div>
@@ -78,7 +82,9 @@ export default async function LandingPage() {
                 <div className="text-[13px] font-semibold text-[oklch(85%_0.02_155)]">Maya&apos;s portfolio</div>
                 <div className="text-[12px] font-semibold text-[oklch(72%_0.11_75)]">+4.2%</div>
               </div>
-              <div className="font-serif font-semibold text-[26px] text-white mb-3.5">₪212.30</div>
+              <div className="font-serif font-semibold text-[26px] text-white mb-3.5">
+                <span className="font-sans">₪</span>212.30
+              </div>
               <div className="flex items-end gap-[5px] h-11">
                 <div className="w-full rounded-sm bg-[oklch(40%_0.06_155)]" style={{ height: "40%" }} />
                 <div className="w-full rounded-sm bg-[oklch(40%_0.06_155)]" style={{ height: "55%" }} />
