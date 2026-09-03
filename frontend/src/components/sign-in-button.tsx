@@ -41,11 +41,11 @@ function ConsentSheet({ onClose }: { onClose: () => void }) {
         />
         <span>
           I&apos;m a parent or guardian and I agree to the{" "}
-          <a href="/privacy" target="_blank" className="text-emerald underline">
+          <a href="/privacy" target="_blank" rel="noopener noreferrer" className="text-emerald underline">
             Privacy Policy
           </a>{" "}
           and{" "}
-          <a href="/terms" target="_blank" className="text-emerald underline">
+          <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-emerald underline">
             Terms of Service
           </a>
           .

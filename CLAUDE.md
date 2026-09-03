@@ -110,6 +110,46 @@ pick a currency nobody had used yet had no rate to convert with. Fixed:
   `SELECT ... FOR UPDATE` for a rare, human-paced action — but worth
   knowing if this ever needs to become bulletproof.
 
+**Launch-compliance: privacy policy, terms of service, and consent
+tracking (built 2026-09-03).** Two pre-launch requirements from spec 4.2
+are done: a real `/privacy` and `/terms` page (Portugal named as
+governing law/venue in the Terms — the app's operator's home
+jurisdiction, chosen deliberately as a deterrent against nuisance
+claims, not as a compliance guarantee — see the conversation this
+shipped from if you need the reasoning again), and a consent gate in
+front of Google sign-in. Key decisions:
+- **Consent is a UI gate, not a piece of data threaded through the
+  OAuth round-trip.** `sign-in-button.tsx`'s `SignInButton` opens a
+  `BottomSheet` ("Before you continue") with a checkbox that must be
+  checked before "Continue with Google" enables; only then does the
+  existing `signIn("google", ...)` fire. This sidesteps needing to pass
+  a consent flag through NextAuth's server-side `jwt` callback (which
+  doesn't have clean access to client state across the Google redirect
+  round-trip) — the button being disabled *is* the enforcement.
+- **`users.consent_accepted_at`** (migration `0009`) is stamped once, in
+  `routes_auth.py`, only when a brand-new user row is created — not on
+  every sign-in. It's the audit-trail record of "this account was
+  created under the consent-gated flow." **NULL means the account
+  predates this feature, not that consent was declined** — it isn't
+  backfilled for existing accounts, since there's nothing honest to
+  backfill.
+- **The Google OAuth client is now published** (Google Cloud
+  Console → Audience → the app moved out of "Testing" mode) — the app
+  only requests non-sensitive scopes (`openid email profile`), so this
+  didn't require Google's manual verification review, just filling in
+  Branding (app info + the two policy links) and publishing. Anyone with
+  a Google account can now sign in, not just an explicit test-user
+  allowlist.
+- Shared layout between the two legal pages lives in
+  `components/legal-page.tsx` (`LegalPage`/`LegalSection`) — write both
+  pages through that rather than re-duplicating the nav/footer shell.
+- **Real-world multi-worker collision, resolved along the way:** this
+  branch's migration was originally also numbered `0005`, colliding with
+  worker-3's in-flight (uncommitted-at-the-time) `0005`-`0008`. See the
+  "If you're picking up work in a parallel worktree" section below for
+  exactly how that got resolved — worth reading if you hit the same
+  thing.
+
 **Deployed and confirmed working** (signed in and tested live on a phone,
 2026-08-20):
 - Frontend: https://family-bank-nine.vercel.app (Vercel, root directory
@@ -129,20 +169,6 @@ pick a currency nobody had used yet had no rate to convert with. Fixed:
   can take 30-50s. Not a bug if something seems slow after a break.
 
 **Not yet done:**
-- Google OAuth client is still in "Testing" mode (Google Cloud Console)
-  — only test users you've explicitly added can sign in. The app only
-  requests non-sensitive scopes (`openid email profile`, NextAuth's
-  Google provider default — see `frontend/src/auth.ts`), so publishing
-  should just require filling in the consent screen (privacy policy /
-  terms links now exist, see below) and clicking Publish — not a lengthy
-  manual verification review. Still needs the user to actually do this
-  in Google Cloud Console.
-- ~~Children's-data privacy policy~~ — done as of 2026-09-03: see
-  `/privacy` and `/terms` pages, a consent checkbox gating sign-in
-  (`components/sign-in-button.tsx`), and a `consent_accepted_at` stamp
-  on the `users` row (migration `0009`, set in `routes_auth.py` on
-  first sign-in). NULL on that column means "predates this feature,"
-  not "declined" — it isn't backfilled for existing accounts.
 - See `TODO.txt` at repo root for the user's own running feature-idea
   list (currency-change UX, pocket money, safety, co-parent sharing,
   native app, kid login, multi-kid competitions). That file is
