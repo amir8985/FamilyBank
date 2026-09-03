@@ -195,6 +195,7 @@ async def buy(
             DebtTransactionType.DEDUCT,
             cost_family,
             note=f"Bought {units} units of {symbol}",
+            is_investment=True,
         )
 
         holding = await session.scalar(
@@ -251,6 +252,7 @@ async def sell(
             DebtTransactionType.ADD,
             proceeds_family,
             note=f"Sold {units} units of {symbol}",
+            is_investment=True,
         )
 
         holding.units -= units

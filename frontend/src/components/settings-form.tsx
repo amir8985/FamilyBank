@@ -5,6 +5,7 @@ import { signOut, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/ui/avatar";
 import { AddKidSheet } from "@/components/add-kid-sheet";
+import { CurrencyChangeSheet } from "@/components/currency-change-sheet";
 import { api, ApiError } from "@/lib/api";
 import { SUPPORTED_CURRENCIES } from "@/lib/currencies";
 import type { KidSummary } from "@/lib/types";
@@ -19,28 +20,11 @@ export function SettingsForm({
   const { data: session } = useSession();
   const router = useRouter();
   const [currency, setCurrency] = useState(currentCurrency);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [changeTarget, setChangeTarget] = useState<string | null>(null);
   const [addKidOpen, setAddKidOpen] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
-
-  async function handleSave() {
-    if (!session?.backendToken) return;
-    setSaving(true);
-    setError(null);
-    setSaved(false);
-    try {
-      await api.patch("/family/settings", session.backendToken, { base_currency: currency });
-      setSaved(true);
-      router.refresh();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Something went wrong");
-    } finally {
-      setSaving(false);
-    }
-  }
 
   async function handleRemoveKid(kid: KidSummary) {
     if (!session?.backendToken) return;
@@ -62,10 +46,7 @@ export function SettingsForm({
         <span className="text-[12px] font-semibold text-muted">Family currency</span>
         <select
           value={currency}
-          onChange={(e) => {
-            setCurrency(e.target.value);
-            setSaved(false);
-          }}
+          onChange={(e) => setCurrency(e.target.value)}
           className="border border-border-hairline-strong rounded-[10px] px-3.5 py-3 text-[14.5px] text-emerald-dark outline-none focus:border-emerald bg-card"
         >
           {SUPPORTED_CURRENCIES.map((c) => (
@@ -76,15 +57,14 @@ export function SettingsForm({
         </select>
 
         {error && <p className="text-[13px] text-negative">{error}</p>}
-        {saved && <p className="text-[13px] text-positive">Saved.</p>}
 
         <button
           type="button"
-          disabled={saving || currency === currentCurrency}
-          onClick={handleSave}
+          disabled={currency === currentCurrency}
+          onClick={() => setChangeTarget(currency)}
           className="bg-emerald text-white text-center min-h-11 py-[13px] rounded-xl text-[14px] font-semibold disabled:opacity-50 cursor-pointer mt-1"
         >
-          {saving ? "Saving…" : "Save currency"}
+          Change currency
         </button>
       </label>
 
@@ -121,6 +101,14 @@ export function SettingsForm({
       </div>
 
       {addKidOpen && <AddKidSheet onClose={() => setAddKidOpen(false)} />}
+
+      {changeTarget && (
+        <CurrencyChangeSheet
+          fromCurrency={currentCurrency}
+          toCurrency={changeTarget}
+          onClose={() => setChangeTarget(null)}
+        />
+      )}
 
       {process.env.NODE_ENV === "development" && (
         <div className="flex flex-col gap-2 pt-6 border-t border-border-hairline-strong">
