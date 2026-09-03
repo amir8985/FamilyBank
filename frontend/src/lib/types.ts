@@ -45,6 +45,11 @@ export type DebtTransactionOut = {
   amount: string;
   note: string | null;
   is_adjustment: boolean;
+  is_investment: boolean;
+  currency: string;
+  previous_currency: string;
+  balance_before: string;
+  balance_after: string;
   created_at: string;
 };
 

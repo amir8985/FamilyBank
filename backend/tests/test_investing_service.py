@@ -39,6 +39,14 @@ async def test_buy_persists_holding_and_debits_cash(db_session, family, seeded_a
     assert portfolio["holdings"][0]["units"] == Decimal("2")
     assert await debts_db_service.get_balance(db_session, kid.id) == Decimal("800")  # 1000 - 2*100
 
+    # The debt row the buy writes must be flagged so the history screen
+    # can show "Bought" instead of a generic "Deducted" — see
+    # test_currency_change.py's history-rendering tests for the reverse
+    # case (a manual deduct must NOT be flagged this way).
+    rows = await debts_db_service.list_transactions(db_session, kid.id)
+    buy_row = next(r for r in rows if r.note and r.note.startswith("Bought"))
+    assert buy_row.is_investment is True
+
 
 async def test_buy_rejects_insufficient_funds(db_session, family, seeded_asset):
     kid = await _make_kid(db_session, family)

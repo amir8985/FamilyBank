@@ -7,14 +7,14 @@ mainly cover the debt ledger side plus the preview/warning endpoint and
 the FX-cache-completeness fix that makes both possible.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import delete, or_
 from sqlalchemy.dialects.postgresql import insert
 
 from app.models.catalog import FxRateCache
-from app.models.debt_transaction import DebtTransactionType
+from app.models.debt_transaction import DebtTransaction, DebtTransactionType
 from app.models.kid import Kid
 from app.services import debts_db_service, investing_service
 
@@ -28,6 +28,25 @@ async def _make_kid(db_session, family, name="Kid") -> Kid:
 
 async def _fund(db_session, kid, amount: str):
     await debts_db_service.record_transaction(db_session, kid.id, DebtTransactionType.ADD, Decimal(amount))
+
+
+async def _fund_in_the_past(db_session, kid, amount: str):
+    # Postgres's now() (the created_at server default) returns the
+    # *transaction's* start time, and this whole test runs inside one
+    # outer transaction (see conftest.py) — so a row inserted this way
+    # and one inserted later via the API in the same test would get an
+    # identical created_at, making their relative order ambiguous. Real
+    # requests are separate transactions with genuinely distinct times;
+    # this only matters for tests that depend on chronological order.
+    txn = DebtTransaction(
+        kid_id=kid.id,
+        type=DebtTransactionType.ADD,
+        amount=Decimal(amount),
+        created_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+    )
+    db_session.add(txn)
+    await db_session.flush()
+    return txn
 
 
 async def _seed_rate(db_session, base: str, quote: str, rate: str):
@@ -196,3 +215,39 @@ async def test_investment_value_reprices_automatically_after_currency_change(
 
     portfolio = await investing_service.get_portfolio(db_session, kid, "ILS")
     assert portfolio["holdings"][0]["current_value"] == Decimal("720.00")  # 2*100 USD -> ILS
+
+
+async def test_history_shows_each_row_in_the_currency_it_was_actually_recorded_in(
+    client, db_session, family, auth_headers
+):
+    """The bug a parent actually hit: after converting, an old 200 EUR
+    deposit was displayed with a ILS symbol as if 200 ILS had been added.
+    debts_db_service.list_transactions_with_currency (via GET .../debt)
+    must tag every row with the currency it was really recorded in, not
+    the family's currency today."""
+    kid = await _make_kid(db_session, family)
+    family.base_currency = "EUR"
+    await db_session.flush()
+    await _fund_in_the_past(db_session, kid, "200")  # 200 EUR
+    await _clear_rate(db_session, "EUR", "ILS")
+    await _seed_rate(db_session, "EUR", "ILS", "3.5")
+
+    resp = await client.patch("/family/settings", headers=auth_headers, json={"base_currency": "ILS"})
+    assert resp.status_code == 200
+
+    resp = await client.get(f"/kids/{kid.id}/debt", headers=auth_headers)
+    assert resp.status_code == 200
+    rows = {r["is_adjustment"]: r for r in resp.json()}
+
+    original = rows[False]
+    assert original.get("is_investment") is False
+    assert original["amount"] == "200.00"
+    assert original["currency"] == "EUR"  # not ILS, even though that's current now
+    assert original["balance_before"] == "0.00" and original["previous_currency"] == "EUR"
+    assert original["balance_after"] == "200.00"
+
+    adjustment = rows[True]
+    assert adjustment["currency"] == "ILS"
+    assert adjustment["previous_currency"] == "EUR"
+    assert adjustment["balance_before"] == "200.00"  # 200 EUR
+    assert adjustment["balance_after"] == "700.00"  # 200 EUR -> 700 ILS at rate 3.5
