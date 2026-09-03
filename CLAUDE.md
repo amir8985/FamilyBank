@@ -21,17 +21,57 @@ backend/    FastAPI + SQLAlchemy + Postgres (Neon) — see backend/README.md
 frontend/   Next.js 16 (App Router) + Tailwind v4 — see frontend/README.md
 ```
 
-## Status as of 2026-08-21
+## Status as of 2026-09-03
 
 **Built and verified:** the full v1 flow — Google-only sign-in →
 onboarding (currency + first kids) → home (balances, add/deduct) → kid
 portfolio (holdings, since-purchase %, sell) → buy flow (units/amount
 toggle with a live server-computed quote, snapped to a real tradable
-step size) → per-kid history (general + investment-only) → settings
-(currency, kid management, **real currency conversion with a warning
-dialog** — see below). 62 backend tests pass (`cd backend && pytest`),
-frontend `npm run build`/`npm run lint` are clean, and every screen has
-been visually verified against the design handoff.
+step size) → per-kid history (general + investment-only, now currency-
+and source-aware — see below) → settings (currency, kid management,
+**real currency conversion with a warning dialog**). 65 backend tests
+pass (`cd backend && pytest`), frontend `npm run build`/`npm run lint`
+are clean.
+
+**History now shows every row in the currency it was actually recorded
+in, plus a running balance and the source of each change (built
+2026-09-03).** A parent hit this for real right after the currency-
+change feature below shipped: an old 200 EUR deposit displayed as
+"200 ILS" after converting to ILS, because every row was formatted with
+the family's *current* currency instead of whichever currency was
+active when it was recorded — `debt_transactions.amount` has no
+per-row currency (see "Lessons learned"). Fixed in
+`debts_db_service.list_transactions_with_currency` (used by
+`GET /kids/{id}/debt`): walks a kid's ledger oldest-to-newest and flips
+the tracked currency at each `is_adjustment` row, which now records its
+own `from_currency`/`to_currency` (migration 0006). Also added:
+- **Balance before/after per row**, so a currency-conversion row reads
+  as "was €182.86 → now ₪638.60" instead of just a bare amount — this
+  is what actually makes a cross-currency row legible.
+- **`is_investment`** on the debt row `buy()`/`sell()` write alongside
+  a real investment transaction, so history shows "Bought"/"Sold"
+  instead of a generic "Added"/"Deducted" indistinguishable from a
+  parent manually changing the balance.
+- **Migrations 0007/0008 backfill both of the above** for rows written
+  before migration 0006 existed (parsed from each row's own note text,
+  e.g. "Currency changed: EUR → ILS" or "Bought 0.008 units of QQQ") —
+  a new nullable column has no way to backfill data it never captured,
+  so every *existing* adjustment/buy/sell row would otherwise have kept
+  reading as NULL/false forever. `debts_db_service._adjustment_currencies`
+  also has a note-parsing runtime fallback for the same reason, so a
+  database that hasn't run 0007/0008 yet degrades gracefully instead of
+  the endpoint 500ing (which is exactly what happened before this fix —
+  see "Lessons learned").
+- **Known limitation, not addressed:** if a currency change nets to
+  exactly zero for a kid (e.g. their balance happened to be 0 at that
+  moment), `apply_currency_conversion` skips writing them an adjustment
+  row (would be a no-op) — but `list_transactions_with_currency` uses a
+  kid's *own* adjustment rows to know when their currency changed, so
+  that kid's older rows (if they have prior history that nets to zero)
+  keep reading as today's currency forever instead of the one they were
+  actually recorded in. Rare and left unaddressed; fixing it properly
+  means tracking currency changes at the family level independent of
+  any one kid's balance.
 
 **Currency change now actually converts balances, not just relabels
 them (built 2026-08-21).** Previously, switching a family's currency in
@@ -124,16 +164,25 @@ everything except the deployed app itself**:
 - **Production** (`ep-crimson-wildflower-...`) — only Render's
   `DATABASE_URL` env var should point at this. Never put it in a local
   `.env`; you shouldn't need to touch it directly at all.
-- **Dev/test branch** (`ep-purple-mud-...`) — what `backend/.env`
-  points at locally, and what all local/worktree work and the pytest
-  suite should run against. Created as a Neon branch (copy-on-write
-  snapshot) from production, so its schema is current (migrations
-  already applied through 0004 as of this writing) and it happens to
-  contain a *copy* of what was real family data at branch-creation time
-  — that copy is now fully independent of production, so it's fine to
-  modify or delete during testing. If you need the exact connection
-  string, ask the user (it's in `backend/.env`, which is gitignored —
-  never committed) rather than guessing at the hostname.
+- **Dev/test branch** (`ep-autumn-violet-...` as of 2026-09-03 — this
+  has already changed hostname once, when the original `ep-purple-mud-...`
+  branch's password stopped working and the user cut a fresh Neon
+  branch; **don't hardcode the hostname anywhere, always read it from
+  `backend/.env`**, and don't be surprised if it's changed again by the
+  time you read this) — what `backend/.env` points at locally, and what
+  all local/worktree work and the pytest suite should run against.
+  Created as a Neon branch (copy-on-write snapshot) from production, so
+  its schema is current (migrations applied through 0008 as of this
+  writing) and it happens to contain a *copy* of what was real family
+  data at branch-creation time — that copy is now fully independent of
+  production, so it's fine to modify or delete during testing. If you
+  need the exact connection string, ask the user (it's in
+  `backend/.env`, which is gitignored — never committed) rather than
+  guessing at the hostname. Note the connection string Neon's dashboard
+  hands you is `postgresql://...` — this project needs the async driver,
+  so it must be edited to `postgresql+asyncpg://...` (and the
+  `channel_binding`/`sslmode` query params dropped, since asyncpg
+  doesn't parse them the way libpq does) before it'll work here.
 
 Within the dev/test branch:
 
@@ -206,6 +255,27 @@ worktree/checkout.
   a conversion adjustment silently corrupts every existing amount's
   real-world meaning. If you add another currency-denominated column
   without its own currency field, it has the same trap.
+- **Adding a nullable column that new code assumes is "always set" will
+  crash on every row written before the migration.** This actually
+  happened: `is_adjustment`'s `from_currency`/`to_currency` and
+  `is_investment` (migration 0006) left every pre-existing row with
+  NULL/false forever — a migration that only adds a column has no way
+  to backfill data it never captured — and the endpoint reading them
+  500'd the moment a real user hit an old row. If new code needs a
+  column populated on *every* row, either backfill existing rows in the
+  same migration (or a follow-up one — see 0007/0008, which parse the
+  same info back out of each row's own note text) or write the read
+  path to degrade gracefully when it's NULL, ideally both.
+- **A stuck/orphaned local dev server on Windows can survive `Stop-Process`
+  reporting "process not found" while still actually answering
+  requests** — `netstat -ano` kept showing a PID bound to a port that no
+  process-enumeration tool (`Get-Process`, `Get-CimInstance`, `taskkill`)
+  could find, and it kept serving *stale* code through several full
+  restarts on that port. Cause unconfirmed; the fix was to stop fighting
+  it and just move the dev server to a different port (update
+  `frontend/.env.local`'s `BACKEND_URL`/`NEXT_PUBLIC_BACKEND_URL` to
+  match) rather than trusting that a given port number is actually free
+  just because you just killed everything you can see on it.
 
 ## Architecture quick-reference
 

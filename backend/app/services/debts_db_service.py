@@ -157,6 +157,17 @@ async def apply_currency_conversion(
     converted balance doesn't change (a zero balance, or a rate close
     enough to 1 that the delta rounds to nothing), since an adjustment
     row would be a no-op.
+
+    Known gap: if this returns None, the kid gets no adjustment row for
+    this conversion at all. list_transactions_with_currency uses a kid's
+    own adjustment rows to know when its currency changed, so if that kid
+    had a nonzero-then-zeroed history (e.g. +50 then -50) at the moment
+    of a conversion that nets to zero for them, those old rows keep
+    reading as today's currency forever instead of the one they were
+    actually recorded in. Rare (needs an exact zero balance right at
+    conversion time on a kid with prior history) and left unaddressed —
+    fixing it properly would mean tracking currency changes at the
+    family level independent of any one kid's balance.
     """
     balance = await get_balance(session, kid_id)
     delta = (balance * rate - balance).quantize(Decimal("0.01"))
