@@ -60,17 +60,30 @@ async def get_rate(session: AsyncSession, base: str, quote: str) -> Decimal:
             FxRateCache.base_currency == base, FxRateCache.quote_currency == quote
         )
     )
-    if row is None:
-        # Fall back to the inverse pair if that's the one cached.
-        inverse = await session.scalar(
-            select(FxRateCache).where(
-                FxRateCache.base_currency == quote, FxRateCache.quote_currency == base
-            )
+    if row is not None:
+        return row.rate
+
+    # Fall back to the inverse pair if that's the one cached.
+    inverse = await session.scalar(
+        select(FxRateCache).where(
+            FxRateCache.base_currency == quote, FxRateCache.quote_currency == base
         )
-        if inverse is not None and inverse.rate:
-            return Decimal("1") / inverse.rate
-        raise ValueError(f"No cached FX rate for {base}->{quote}")
-    return row.rate
+    )
+    if inverse is not None and inverse.rate:
+        return Decimal("1") / inverse.rate
+
+    # Neither leg is cached directly — the scheduler only ever caches
+    # pairs against USD (see scheduler/jobs.py), so any other pair has
+    # to triangulate through it rather than fail outright.
+    if base != "USD" and quote != "USD":
+        try:
+            base_to_usd = await get_rate(session, base, "USD")
+            usd_to_quote = await get_rate(session, "USD", quote)
+            return base_to_usd * usd_to_quote
+        except ValueError:
+            pass
+
+    raise ValueError(f"No cached FX rate for {base}->{quote}")
 
 
 async def convert(session: AsyncSession, amount: Decimal, base: str, quote: str) -> Decimal:
@@ -98,6 +111,14 @@ def rate_from_table(rates: RateTable, base: str, quote: str) -> Decimal | None:
     inverse = rates.get((quote, base))
     if inverse:
         return Decimal("1") / inverse
+
+    # Same triangulation fallback as get_rate() — see its comment.
+    if base != "USD" and quote != "USD":
+        base_to_usd = rate_from_table(rates, base, "USD")
+        usd_to_quote = rate_from_table(rates, "USD", quote)
+        if base_to_usd is not None and usd_to_quote is not None:
+            return base_to_usd * usd_to_quote
+
     return None
 
 

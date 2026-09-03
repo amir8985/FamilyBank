@@ -30,3 +30,24 @@ def test_convert_from_table_applies_rate():
 
 def test_convert_from_table_missing_rate_returns_none():
     assert convert_from_table({}, Decimal("10"), "USD", "GBP") is None
+
+
+def test_triangulates_through_usd_when_no_direct_pair_cached():
+    # Only USD legs cached (what the scheduler actually caches), no
+    # direct EUR<->ILS pair — must still resolve via USD. Both legs here
+    # are the *inverse* of what's cached (USD->EUR, USD->ILS), so
+    # EUR->ILS = (1/0.9) * 3.6.
+    rates = {("USD", "EUR"): Decimal("0.9"), ("USD", "ILS"): Decimal("3.6")}
+    expected = (Decimal("1") / Decimal("0.9")) * Decimal("3.6")
+    assert rate_from_table(rates, "EUR", "ILS") == expected
+
+
+def test_triangulation_also_works_through_direct_usd_legs():
+    # Here EUR->USD is cached directly (not as an inverse), so
+    # EUR->ILS = 1.1 * 3.6.
+    rates = {("EUR", "USD"): Decimal("1.1"), ("USD", "ILS"): Decimal("3.6")}
+    assert rate_from_table(rates, "EUR", "ILS") == Decimal("1.1") * Decimal("3.6")
+
+
+def test_triangulation_returns_none_if_either_usd_leg_missing():
+    assert rate_from_table({("USD", "EUR"): Decimal("0.9")}, "EUR", "ILS") is None

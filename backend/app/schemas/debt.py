@@ -18,6 +18,12 @@ class DebtTransactionOut(BaseModel):
     type: DebtTransactionType
     amount: Decimal
     note: str | None
+    is_adjustment: bool
+    is_investment: bool
+    currency: str
+    previous_currency: str
+    balance_before: Decimal
+    balance_after: Decimal
     created_at: datetime
 
 
