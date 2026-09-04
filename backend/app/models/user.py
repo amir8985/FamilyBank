@@ -1,6 +1,7 @@
 import uuid
+from datetime import datetime
 
-from sqlalchemy import ForeignKey
+from sqlalchemy import DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -19,3 +20,10 @@ class User(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     email: Mapped[str] = mapped_column(unique=True, index=True)
     google_sub: Mapped[str] = mapped_column(unique=True, index=True)
     name: Mapped[str | None] = mapped_column(default=None)
+
+    # Set once, at account creation, when the frontend's consent gate (the
+    # checkbox in front of Google sign-in) was in front of the user. NULL
+    # means the account predates that flow — not that consent was refused.
+    consent_accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )

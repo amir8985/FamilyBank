@@ -34,6 +34,7 @@ async def test_first_sign_in_creates_family_and_user(client, db_session, monkeyp
 
     user = await db_session.scalar(select(User).where(User.google_sub == "google-sub-123"))
     assert user is not None
+    assert user.consent_accepted_at is not None  # stamped at signup, front-end gates the button
     family = await db_session.get(Family, user.family_id)
     assert family is not None
     assert family.onboarding_completed is False  # new family needs onboarding

@@ -120,6 +120,46 @@ pick a currency nobody had used yet had no rate to convert with. Fixed:
   `SELECT ... FOR UPDATE` for a rare, human-paced action — but worth
   knowing if this ever needs to become bulletproof.
 
+**Launch-compliance: privacy policy, terms of service, and consent
+tracking (built 2026-09-03).** Two pre-launch requirements from spec 4.2
+are done: a real `/privacy` and `/terms` page (Portugal named as
+governing law/venue in the Terms — the app's operator's home
+jurisdiction, chosen deliberately as a deterrent against nuisance
+claims, not as a compliance guarantee — see the conversation this
+shipped from if you need the reasoning again), and a consent gate in
+front of Google sign-in. Key decisions:
+- **Consent is a UI gate, not a piece of data threaded through the
+  OAuth round-trip.** `sign-in-button.tsx`'s `SignInButton` opens a
+  `BottomSheet` ("Before you continue") with a checkbox that must be
+  checked before "Continue with Google" enables; only then does the
+  existing `signIn("google", ...)` fire. This sidesteps needing to pass
+  a consent flag through NextAuth's server-side `jwt` callback (which
+  doesn't have clean access to client state across the Google redirect
+  round-trip) — the button being disabled *is* the enforcement.
+- **`users.consent_accepted_at`** (migration `0009`) is stamped once, in
+  `routes_auth.py`, only when a brand-new user row is created — not on
+  every sign-in. It's the audit-trail record of "this account was
+  created under the consent-gated flow." **NULL means the account
+  predates this feature, not that consent was declined** — it isn't
+  backfilled for existing accounts, since there's nothing honest to
+  backfill.
+- **The Google OAuth client is now published** (Google Cloud
+  Console → Audience → the app moved out of "Testing" mode) — the app
+  only requests non-sensitive scopes (`openid email profile`), so this
+  didn't require Google's manual verification review, just filling in
+  Branding (app info + the two policy links) and publishing. Anyone with
+  a Google account can now sign in, not just an explicit test-user
+  allowlist.
+- Shared layout between the two legal pages lives in
+  `components/legal-page.tsx` (`LegalPage`/`LegalSection`) — write both
+  pages through that rather than re-duplicating the nav/footer shell.
+- **Real-world multi-worker collision, resolved along the way:** this
+  branch's migration was originally also numbered `0005`, colliding with
+  worker-3's in-flight (uncommitted-at-the-time) `0005`-`0008`. See the
+  "If you're picking up work in a parallel worktree" section below for
+  exactly how that got resolved — worth reading if you hit the same
+  thing.
+
 **Deployed and confirmed working** (signed in and tested live on a phone,
 2026-08-20):
 - Frontend: https://family-bank-nine.vercel.app (Vercel, root directory
@@ -139,11 +179,6 @@ pick a currency nobody had used yet had no rate to convert with. Fixed:
   can take 30-50s. Not a bug if something seems slow after a break.
 
 **Not yet done:**
-- Google OAuth client is still in "Testing" mode (Google Cloud Console)
-  — only test users you've explicitly added can sign in. Needs Google's
-  verification review before public launch.
-- Children's-data privacy policy — flagged in spec 4.2 as a pre-launch
-  requirement, not needed to keep building.
 - See `TODO.txt` at repo root for the user's own running feature-idea
   list (currency-change UX, pocket money, safety, co-parent sharing,
   native app, kid login, multi-kid competitions). That file is
@@ -182,7 +217,7 @@ everything except the deployed app itself**:
   time you read this) — what `backend/.env` points at locally, and what
   all local/worktree work and the pytest suite should run against.
   Created as a Neon branch (copy-on-write snapshot) from production, so
-  its schema is current (migrations applied through 0008 as of this
+  its schema is current (migrations applied through 0009 as of this
   writing) and it happens to contain a *copy* of what was real family
   data at branch-creation time — that copy is now fully independent of
   production, so it's fine to modify or delete during testing. If you
@@ -357,6 +392,22 @@ If a fourth worktree gets created later, pick the next port pair
   worker is also mid-way through (schema/migrations especially — two
   workers both adding, say, "0005_*.py" will collide; check
   `alembic/versions/` for the latest number before naming a new one).
+  This isn't hypothetical — it happened on 2026-09-03: worker-3 had
+  0005-0008 committed locally (not yet in `master`) and already applied
+  to the shared dev/test branch, while worker-2 had independently
+  written its own 0005. Resolution: message the other session directly
+  (`ListAgents`/`SendMessage` — they're interactive Claude sessions on
+  the same machine, not black boxes) to confirm what's actually applied
+  vs. still in flight, rename your migration to sit after theirs
+  (down_revision pointing at their real head), then to actually run
+  `alembic upgrade head` locally you need their migration *files*
+  physically present (Alembic needs the whole chain on disk to resolve
+  revisions, even though it won't re-run already-applied ones) — copy
+  them in from their worktree, run your migration, then delete the
+  copies again so your branch's diff stays just your own file. Their
+  migrations still need to land in `master` before yours can merge
+  cleanly (down_revision references a revision `master` doesn't have
+  yet).
 - Don't assume you're the only session running. If something in the DB
   looks different from what you expect (an extra migration applied, test
   data you didn't create), another worker probably did it — check
