@@ -61,7 +61,8 @@ export function formatMoneyParts(
         .join(""),
     };
   } catch {
-    return { before: "", symbol: currency, after: ` ${value.toFixed(2)}` };
+    // Matches formatMoney's own fallback ordering ("12.34 USD").
+    return { before: `${value.toFixed(2)} `, symbol: currency, after: "" };
   }
 }
 
