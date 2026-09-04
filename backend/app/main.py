@@ -35,7 +35,19 @@ async def lifespan(app: FastAPI):
         task.cancel()
 
 
-app = FastAPI(title="FamilyBank API", version="1.2.0", lifespan=lifespan)
+app = FastAPI(
+    title="FamilyBank API",
+    version="1.2.0",
+    lifespan=lifespan,
+    # Swagger/ReDoc/schema map out the whole API surface (including
+    # /internal/* route names) to anyone who visits them — harmless
+    # against a properly-auth'd API, but no reason to hand it out
+    # publicly either. Same dev_mode gate as the other dev-only surface
+    # (routes_internal.dev_reset).
+    docs_url="/docs" if settings.dev_mode else None,
+    redoc_url="/redoc" if settings.dev_mode else None,
+    openapi_url="/openapi.json" if settings.dev_mode else None,
+)
 
 app.add_middleware(
     CORSMiddleware,
