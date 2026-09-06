@@ -22,6 +22,11 @@ name: Android - Build signed .aab
 #      already installed, then telling bubblewrap to use *that* SDK
 #      (answer "n" to "install the Android SDK?") instead of trying to
 #      fetch and license its own.
+#   3. Answering "n" then leads to a free-text "Path to your existing
+#      Android SDK:" prompt — a blank answer isn't accepted there (it's
+#      not a bracketed-default question like the others), so it looped
+#      "The provided androidSdk isn't correct" forever. Fixed by piping
+#      the real path ($ANDROID_HOME, set by setup-android) as the answer.
 # If a *different* prompt shows up later that this doesn't cover, the
 # fix is the same pattern: pipe an answer to it.
 on:
@@ -73,12 +78,14 @@ jobs:
           BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           BUBBLEWRAP_KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
-          # First answer is "n" — use the SDK already installed and
-          # licensed above, don't let bubblewrap fetch its own copy.
-          # Everything after that pipes blank answers to accept
-          # whatever default it shows (e.g. the SDK path it
-          # auto-detects from $ANDROID_HOME).
-          { echo "n"; yes ""; } | bubblewrap build \
+          # "n" = use the SDK already installed/licensed above, don't
+          # let bubblewrap fetch its own. It then asks for the SDK's
+          # path as free text — a blank answer isn't accepted there
+          # (unlike the (Y/n) questions), so it must get a real path;
+          # $ANDROID_HOME is what android-actions/setup-android set.
+          # Anything after that gets blank answers for any remaining
+          # defaults.
+          { echo "n"; echo "$ANDROID_HOME"; yes ""; } | bubblewrap build \
             --signingKeyPath=../android-release.keystore \
             --signingKeyAlias=upload
 
