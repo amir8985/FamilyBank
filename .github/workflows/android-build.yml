@@ -34,9 +34,18 @@ name: Android - Build signed .aab
 #      jdkPath/androidSdkPath) *before* ever invoking it, which makes it
 #      skip these prompts entirely instead of asking and validating them
 #      interactively.
-# If a *different* prompt shows up later that this doesn't cover, the
-# fix is the same pattern: pipe an answer to it, or extend the
-# pre-written config below.
+#   4. `init`'s final section generates its own throwaway signing
+#      certificate (unused) via a First/Last/Org/City/... wizard whose
+#      questions reject blank answers. Two attempts at counting exactly
+#      how many earlier blank-accepted questions precede it both failed
+#      (the count wasn't stable/verifiable through a truncated log) —
+#      switched to the same trick as #3: pre-create the keystore file
+#      init looks for by default (./android.keystore, alias "android")
+#      with a direct, fully non-interactive `keytool` call, so init
+#      finds it already exists and never asks at all.
+# The pattern that's worked best across all of these: don't guess at
+# exactly which prompt a piped answer will land on — find what file
+# bubblewrap checks for and pre-create/pre-configure it instead.
 on:
   workflow_dispatch: {}
 
@@ -80,26 +89,28 @@ jobs:
       - name: Decode signing keystore
         run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > android-release.keystore
 
+      - name: Pre-create the placeholder key bubblewrap init looks for
+        # Bubblewrap init offers to generate its own signing key
+        # (unused — the real one is supplied explicitly via
+        # --signingKeyPath in the build step below) if it doesn't find
+        # one at its default path/alias, via an interactive
+        # First/Last/Org/City/... wizard whose exact question count
+        # proved too fragile to blindly pipe answers to (confirmed
+        # 2026-09-06, two failed attempts at guessing the sequence).
+        # Pre-creating the file it looks for skips that wizard
+        # entirely instead. Password is throwaway — this key is never
+        # used for anything real.
+        working-directory: android
+        run: |
+          keytool -genkeypair -alias android -keyalg RSA -keysize 2048 -validity 10000 \
+            -keystore android.keystore -storepass throwaway123 -keypass throwaway123 \
+            -dname "CN=FamilyBank, OU=FamilyBank, O=FamilyBank, L=Lisbon, ST=Lisbon, C=PT"
+
       - name: Scaffold TWA project (first run only — reuses android/ if it already exists)
         working-directory: android
         run: |
           if [ ! -f twa-manifest.json ]; then
-            # Confirmed on 2026-09-06: the first 14 questions (domain,
-            # app name, package ID, colors, icons, orientation, Play
-            # Billing, ...) all accept a blank answer fine. Question 15
-            # onward generates a throwaway signing certificate bubblewrap
-            # itself doesn't end up using (our real one is supplied
-            # explicitly via --signingKeyPath in the build step below) —
-            # but it rejects blank answers, so it needs real text.
-            { for i in $(seq 1 14); do echo ""; done
-              echo "FamilyBank Support"   # First and Last name
-              echo "FamilyBank"           # Organizational Unit
-              echo "FamilyBank"           # Organization
-              echo "Lisbon"               # City/Locality
-              echo "Lisbon"               # State/Province
-              echo "PT"                   # Two-letter country code
-              yes ""                      # anything after (e.g. a final confirmation)
-            } | bubblewrap init \
+            yes "" | bubblewrap init \
               --manifest="${{ env.PWA_URL }}/manifest.webmanifest" \
               --directory=. || true
           fi
