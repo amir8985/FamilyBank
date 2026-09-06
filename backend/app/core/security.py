@@ -48,6 +48,31 @@ def issue_session_token(user_id: uuid.UUID, family_id: uuid.UUID, email: str) ->
     return jwt.encode(payload, settings.backend_jwt_secret, algorithm=settings.backend_jwt_algorithm)
 
 
+def get_current_auth_optional(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> AuthContext | None:
+    """Like get_current_auth, but returns None instead of 401ing when the
+    token is missing/expired/malformed — for endpoints (client-side metric
+    reporting) where an unattributed request is still worth logging rather
+    than rejecting outright.
+    """
+    if credentials is None:
+        return None
+    try:
+        payload = jwt.decode(
+            credentials.credentials,
+            settings.backend_jwt_secret,
+            algorithms=[settings.backend_jwt_algorithm],
+        )
+        return AuthContext(
+            user_id=uuid.UUID(payload["sub"]),
+            family_id=uuid.UUID(payload["family_id"]),
+            email=payload["email"],
+        )
+    except (JWTError, KeyError, ValueError):
+        return None
+
+
 def get_current_auth(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> AuthContext:

@@ -31,7 +31,7 @@ backend/    FastAPI + SQLAlchemy + Postgres (Neon) — see backend/README.md
 frontend/   Next.js 16 (App Router) + Tailwind v4 — see frontend/README.md
 ```
 
-## Status as of 2026-09-04
+## Status as of 2026-09-06
 
 **Built and verified:** the full v1 flow — Google-only sign-in →
 onboarding (currency + first kids) → home (balances, add/deduct) → kid
@@ -39,9 +39,97 @@ portfolio (holdings, since-purchase %, sell) → buy flow (units/amount
 toggle with a live server-computed quote, snapped to a real tradable
 step size) → per-kid history (general + investment-only, now currency-
 and source-aware — see below) → settings (currency, kid management,
-**real currency conversion with a warning dialog**). 65 backend tests
+**real currency conversion with a warning dialog**). 74 backend tests
 pass (`cd backend && pytest`), frontend `npm run build`/`npm run lint`
 are clean.
+
+**Request/performance logging + client-side timing beacon (built
+2026-09-06, backend v1.3.0 / frontend v0.6.0).** Motivated by a real
+report: production feels slow on some clicks, but it's not reproducible
+locally — with zero request-level logging in place beforehand, there was
+no way to tell whether that's Render's free-tier cold start (sleeps
+after 15 min idle, 30-50s to wake), the DB, or something in app code.
+This ships the diagnostic instrumentation, not a fix for the slowness
+itself — see "How to actually find the problem" below for the next step.
+- **`RequestLoggingMiddleware`** (`app/core/request_logging.py`) times
+  every backend request, tags it with `user_id`/`family_id` decoded
+  straight off the session JWT (no dependency on the route's own auth —
+  works even for a request that 401s/404s), and both logs a structured
+  JSON line to stdout (viewable in Render's log tail immediately, no new
+  accounts needed) and writes a row to a new `request_logs` table
+  (migration `0010`) so it's actually queryable/aggregable later — this
+  doubles as the seed data for a future per-family/user activity
+  dashboard (deliberately out of scope for this feature — see TODO.txt),
+  which is why family/user id is captured now even though this feature
+  only uses it for latency, not activity, analysis.
+- **Deliberately a raw ASGI middleware, not `BaseHTTPMiddleware`** — the
+  latter buffers the whole response through an in-memory stream per
+  request, which is itself measurable overhead. Would have been ironic
+  for a performance feature to make requests slower.
+- **`POST /internal/client-metrics`**: the frontend's one shared
+  `request()` function (`frontend/src/lib/api.ts`, used by every API call
+  in the app) times each call — success or failure — and fires a
+  non-blocking beacon here with the real HTTP method, path, duration, and
+  status. This is what tells slow-client-or-network apart from
+  slow-server for the *same* logical action, which server-side logging
+  alone can never do. Auth is optional on this endpoint (a metric from a
+  signed-out screen is still worth logging).
+- **Persistence is fire-and-forget on both write paths**
+  (`spawn_persist_request_log`) — a response must never block on the log
+  INSERT itself, or the feature would add to the very latency it exists
+  to diagnose. Tracked in a module-level set with a done-callback rather
+  than a bare `asyncio.create_task(...)`, per asyncio's own documented
+  warning that an unreferenced Task can be garbage-collected mid-flight.
+- **`path`/`error` columns are `Text`, not a length-capped `String`** —
+  Postgres raises on an oversized `VARCHAR(n)` insert rather than
+  truncating, which is the one thing a *logging* write must never do
+  (an unmatched/malformed raw URL, or an unhandled exception's `repr()`,
+  can't be bounded in advance the way validated user input can).
+- **DB persistence is disabled for the whole pytest suite**
+  (`tests/conftest.py`'s autouse `_no_request_log_persistence`, toggled
+  via `request_logging.set_persist_enabled`) — this middleware writes
+  through its own connection (`SessionLocal`), not the request-scoped
+  session the `client` fixture overrides, so left enabled it would insert
+  a real, never-rolled-back row into the shared dev/test DB on every
+  single request the test suite makes.
+- **Known limitation, not addressed:** `/internal/client-metrics` has no
+  auth requirement, rate limit, or shared secret (unlike `/internal/refresh`'s
+  scheduler-secret header) — it's genuinely reachable by anyone on the
+  internet, and an anonymous flood of POSTs would grow `request_logs` and
+  cost real Neon storage/compute. Left as-is for now given this app's low
+  profile (same risk-tolerance call as the currency-conversion race
+  condition below), but worth knowing if abuse ever shows up in the data.
+- **Real-world multi-worker migration collision, again:** this branch's
+  migration also landed as `0010` while worker-3 (a parallel session, same
+  machine) had independently reached `0010`/`0011` for an unrelated
+  feature, already applied to the shared dev/test DB. Same root cause and
+  resolution pattern as the `0005`-`0008` collision documented below —
+  worker-3 had already reconstructed a placeholder `0010` file (see its
+  own docstring) after discovering `alembic upgrade head` silently no-op'd
+  against a revision id we'd both claimed; coordinated directly via
+  `SendMessage` before pushing, worker-3 will delete their placeholder
+  once this branch's real `0010_request_logs.py` is on `master`.
+
+**How to actually find the production slowness, next** (the point of
+this feature): once this is live, let it collect at least a day of real
+traffic, then query `request_logs` directly — no dashboard needed yet:
+```sql
+SELECT path, source, count(*), avg(duration_ms),
+       percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95
+FROM request_logs
+WHERE created_at > now() - interval '2 days'
+GROUP BY path, source ORDER BY p95 DESC;
+```
+Rule out the cheap explanation first — filter `duration_ms > 5000` and
+check whether those rows cluster right after long gaps for the same
+family (Render's free-tier cold start; no amount of logging fixes that,
+only a paid tier or a keep-warm ping would). Then compare `source='client'`
+vs `source='server'` for the same `path`: a big gap points at
+network/cold-start, a small gap with both slow points at the backend
+itself (likely DB/Neon, per the `pool_recycle` note below). If that
+aggregation doesn't pinpoint it, the natural next step is sub-timing
+(DB time vs. external-API time) inside specific slow endpoints — worth
+doing once you know *which* ones, not before.
 
 **UI polish: currency-symbol font fix, button/color consistency, touch
 targets (built 2026-09-04, frontend-only, v0.5.0).** A parent testing on
@@ -380,6 +468,34 @@ worktree/checkout.
   genuine bug for several minutes before realizing the server just
   hadn't restarted. `--reload` watches file changes (including ones from
   git) and avoids this entirely.
+- **Even *with* `--reload`, don't assume every edited file actually got
+  picked up.** Editing two files in quick succession, WatchFiles logged
+  only one "detected changes in ... Reloading" line and never restarted
+  for the other — the server kept answering with the pre-edit behavior
+  for that file indefinitely. Worse, `taskkill` on the resulting stale
+  PID reported `SUCCESS` while `netstat` kept showing it bound and still
+  serving requests — the same "kill reports success but it's still
+  alive" symptom as the orphaned-server entry above, but this time with
+  `--reload` on the whole time. If a running dev server's behavior
+  doesn't match a change you just made, don't trust reload logs — kill
+  it and start fresh (or move ports, per the entry above, if killing
+  doesn't stick either). This didn't affect anything shipped — the real
+  verification was the pytest suite, which imports the actual module
+  fresh each run and isn't subject to this class of staleness at all.
+- **A fire-and-forget `asyncio.create_task(...)` with no reference held
+  is a documented footgun** — asyncio's own docs warn the Task can be
+  garbage-collected mid-execution if nothing else references it. Keep a
+  module-level `set` of in-flight tasks and drop each one via
+  `task.add_done_callback(the_set.discard)` instead of calling
+  `create_task` bare (see `request_logging.spawn_persist_request_log`).
+- **Postgres raises on an oversized `VARCHAR(n)` insert — it does not
+  silently truncate.** A column meant to hold a server-generated string
+  you don't fully control the length of (an exception's `repr()`, a raw
+  unmatched request path) needs `Text`, not a capped `String`, or a rare
+  edge case turns a logging write into a crash (caught here since it's
+  wrapped in try/except, but the row is silently lost instead of stored).
+  Reserve length-capped columns for fields already validated at a
+  boundary (Pydantic, a fixed enum) where the cap can never be exceeded.
 
 ## Architecture quick-reference
 

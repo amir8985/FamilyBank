@@ -15,6 +15,7 @@ from app.api import (
     routes_kids,
 )
 from app.core.config import get_settings
+from app.core.request_logging import RequestLoggingMiddleware
 from app.scheduler.loop import run_forever
 
 settings = get_settings()
@@ -37,7 +38,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="FamilyBank API",
-    version="1.2.0",
+    version="1.3.0",
     lifespan=lifespan,
     # Swagger/ReDoc/schema map out the whole API surface (including
     # /internal/* route names) to anyone who visits them — harmless
@@ -56,6 +57,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Added after CORSMiddleware so it's the outermost layer (Starlette wraps
+# in reverse order of add_middleware calls) — times the whole request,
+# CORS handling included.
+app.add_middleware(RequestLoggingMiddleware)
 
 app.include_router(routes_auth.router)
 app.include_router(routes_kids.router)
