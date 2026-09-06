@@ -8,12 +8,22 @@ name: Android - Build signed .aab
 # end-to-end before this workflow's first real use (no local JDK/Android
 # SDK exist in the dev environment this was written in) — both `init`
 # and `build` can prompt with a (Y/n) question the first time they run
-# in a fresh environment (e.g. "install the Android SDK?"), which hangs
-# forever with no input piped to it. Confirmed on 2026-09-06: `build`
-# hit exactly this and was killed after hanging (exit 130) — fixed by
-# piping `yes ""` (accept every default) into both commands. If a
-# *different* prompt shows up later that this doesn't cover, the fix is
-# the same pattern: pipe an answer to it.
+# in a fresh environment. Two real failures hit and fixed so far
+# (2026-09-06):
+#   1. `build` hung forever on "install the Android SDK?" with no input
+#      piped to it (killed after ~2min, exit 130) — fixed by piping
+#      `yes ""` (accept every bracketed default) into it.
+#   2. Answering "yes, install the SDK" led bubblewrap to try
+#      downloading its own copy, which failed with "Terms and
+#      Conditions was not signed" — Android's SDK licenses need an
+#      explicit "y", which a blank/Enter answer doesn't satisfy, and
+#      it kept re-prompting into a wall of blank lines until it gave up.
+#      Fixed by accepting all SDK licenses on the SDK `setup-android`
+#      already installed, then telling bubblewrap to use *that* SDK
+#      (answer "n" to "install the Android SDK?") instead of trying to
+#      fetch and license its own.
+# If a *different* prompt shows up later that this doesn't cover, the
+# fix is the same pattern: pipe an answer to it.
 on:
   workflow_dispatch: {}
 
@@ -36,6 +46,12 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Accept Android SDK licenses
+        # Required before downloading any SDK platform/build-tools
+        # package non-interactively — a blank/Enter answer does NOT
+        # count as accepting, each license needs a literal "y".
+        run: yes | sdkmanager --licenses || true
+
       - name: Install Bubblewrap CLI
         run: npm install -g @bubblewrap/cli
 
@@ -57,7 +73,12 @@ jobs:
           BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           BUBBLEWRAP_KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
-          yes "" | bubblewrap build \
+          # First answer is "n" — use the SDK already installed and
+          # licensed above, don't let bubblewrap fetch its own copy.
+          # Everything after that pipes blank answers to accept
+          # whatever default it shows (e.g. the SDK path it
+          # auto-detects from $ANDROID_HOME).
+          { echo "n"; yes ""; } | bubblewrap build \
             --signingKeyPath=../android-release.keystore \
             --signingKeyAlias=upload
 
