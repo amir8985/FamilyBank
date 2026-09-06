@@ -9,6 +9,16 @@ it when you finish a session of meaningful work (especially if you hit
 and fixed a real bug — the "Lessons learned" section exists so the next
 session doesn't reintroduce it).
 
+## Talking to the user
+
+The user does not read most of a long response, especially not the
+opening — skims are the default, not the exception. So: end every
+response (not just this file's own updates) with a short, plain-language
+summary of what actually matters — what changed, what's blocked, what
+needs a decision from them, what to do next. Put it last, after the
+detailed work, not only at the top. Don't rely on them having read the
+play-by-play above it.
+
 ## What this is
 
 Parents track allowance/debt owed to their kids; kids "invest" that
@@ -21,7 +31,7 @@ backend/    FastAPI + SQLAlchemy + Postgres (Neon) — see backend/README.md
 frontend/   Next.js 16 (App Router) + Tailwind v4 — see frontend/README.md
 ```
 
-## Status as of 2026-09-03
+## Status as of 2026-09-04
 
 **Built and verified:** the full v1 flow — Google-only sign-in →
 onboarding (currency + first kids) → home (balances, add/deduct) → kid
@@ -32,6 +42,55 @@ and source-aware — see below) → settings (currency, kid management,
 **real currency conversion with a warning dialog**). 65 backend tests
 pass (`cd backend && pytest`), frontend `npm run build`/`npm run lint`
 are clean.
+
+**UI polish: currency-symbol font fix, button/color consistency, touch
+targets (built 2026-09-04, frontend-only, v0.5.0).** A parent testing on
+Android saw ₪ rendering broken/heavy — Source Serif 4 (the serif font
+used for every money numeral) has no real ₪ glyph, so it silently fell
+back to a mismatched system serif. Fixed generically, not ₪-specifically:
+- **New `formatMoneyParts`/`<Money>`** (`lib/format.ts`,
+  `components/ui/money.tsx`) split a formatted amount around its
+  currency symbol via `Intl...formatToParts`, so callers can render the
+  symbol in `font-sans` while the numeral stays in the inherited serif —
+  works for any currency, not just ILS. Swapped in at every call site
+  actually rendered under `font-serif` (checked each one individually —
+  most money displays in this app are plain sans-serif already and
+  didn't need touching); the two standalone-symbol spots (buy/debt
+  amount-input prefixes) just got a `font-sans` span directly, no
+  component needed.
+- **Deduct now reads as a distinct, red action** — new
+  `--color-tint-negative` token, plus the balance-update sheet's
+  Add/Deduct toggle (`SegmentedControl`'s `filled` variant) goes solid
+  red when Deduct is active via a new per-option `activeClassName`
+  override (previously both options showed emerald when selected,
+  regardless of which one).
+- **`--color-positive` changed from amber/brass to green** — inherited
+  from the original design handoff's own token value, not a bug in this
+  codebase, but the *only* place amber/brass was reserved for gains
+  while red meant losses read as inconsistent once seen live (kid asked
+  "why is Deducted the same green as everything else, and Added is
+  yellow"). Affects every day-change %/since-purchase %/history-amount
+  display that reads this token — all green now.
+- **44px minimum touch target** (`min-h-11`) on every pill/filled/
+  outlined button app-wide (not plain text links like "History").
+- Home screen: "You owe" → "Total balance", wrapped in a
+  bordered+shadowed card matching the kid cards below it.
+- App version now shown at the bottom of Settings, read directly from
+  `package.json` (`v0.5.0`) so it can't drift out of sync.
+- **Known gap, not addressed:** phone/LAN dev testing with real Google
+  sign-in doesn't work — Google's OAuth redirect-URI validation rejects
+  a private LAN IP outright (this is separate from the "authorized
+  redirect URI list" issue below; registering the LAN IP doesn't fix it
+  because Google won't accept a non-localhost IP literal there at all).
+  An HTTPS tunnel (ngrok et al.) registered with Google is the only
+  workaround found; not set up this session.
+- **If you add a new worktree/change the frontend dev port:** Google's
+  OAuth client needs `http://localhost:<port>/api/auth/callback/google`
+  added to its Authorized redirect URIs (Google Cloud Console →
+  Credentials) or sign-in fails with "Access blocked" — only port 3000
+  was registered originally. This is independent of the client's
+  Testing/Published status (see the launch-compliance entry below) —
+  it's a separate allowlist.
 
 **History now shows every row in the currency it was actually recorded
 in, plus a running balance and the source of each change (built
@@ -311,6 +370,16 @@ worktree/checkout.
   `frontend/.env.local`'s `BACKEND_URL`/`NEXT_PUBLIC_BACKEND_URL` to
   match) rather than trusting that a given port number is actually free
   just because you just killed everything you can see on it.
+- **Always start `uvicorn` locally with `--reload`.** Started it once
+  without the flag, then did two `git merge`s that changed backend
+  files (a full currency-history rewrite) — the running server kept
+  answering with the pre-merge response shape, which surfaced as a real
+  runtime crash on the frontend (`Cannot read properties of undefined
+  (reading 'toFixed')`, since a field the new frontend code expected was
+  simply missing from the old server's response). Looked exactly like a
+  genuine bug for several minutes before realizing the server just
+  hadn't restarted. `--reload` watches file changes (including ones from
+  git) and avoids this entirely.
 
 ## Architecture quick-reference
 

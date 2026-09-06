@@ -7,6 +7,7 @@ import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Sparkline } from "@/components/ui/sparkline";
 import { PageHeader } from "@/components/ui/page-header";
 import { SellSheet } from "@/components/sell-sheet";
+import { Money } from "@/components/ui/money";
 import { api, ApiError } from "@/lib/api";
 import { currencySymbol, defaultUnitStep, formatMoney, formatPct, formatUpdatedAt, trimUnits } from "@/lib/format";
 import type { AssetDetailOut, BuySellQuoteResponse, HoldingOut, InvestmentTransactionOut } from "@/lib/types";
@@ -126,7 +127,7 @@ export function BuyFormClient({
           </div>
           {asset.price && (
             <div className="font-serif font-semibold text-[24px] text-emerald">
-              {formatMoney(asset.price, currency)}
+              <Money amount={asset.price} currency={currency} />
             </div>
           )}
         </div>
@@ -182,7 +183,7 @@ export function BuyFormClient({
                 aria-label="Fewer units"
                 disabled={(Number(inputValue) || 0) <= step}
                 onClick={() => adjustUnits(-1)}
-                className="w-9 h-9 rounded-full bg-tint-emerald text-emerald text-[20px] font-bold flex items-center justify-center disabled:opacity-30 cursor-pointer"
+                className="w-11 h-11 rounded-full bg-tint-emerald text-emerald text-[20px] font-bold flex items-center justify-center disabled:opacity-30 cursor-pointer"
               >
                 −
               </button>
@@ -200,14 +201,14 @@ export function BuyFormClient({
                 type="button"
                 aria-label="More units"
                 onClick={() => adjustUnits(1)}
-                className="w-9 h-9 rounded-full bg-tint-emerald text-emerald text-[20px] font-bold flex items-center justify-center cursor-pointer"
+                className="w-11 h-11 rounded-full bg-tint-emerald text-emerald text-[20px] font-bold flex items-center justify-center cursor-pointer"
               >
                 +
               </button>
             </div>
           ) : (
             <div className="inline-flex items-baseline gap-0.5 font-serif font-semibold text-[36px] text-emerald">
-              <span>{currencySymbol(currency)}</span>
+              <span className="font-sans">{currencySymbol(currency)}</span>
               <input
                 autoFocus
                 inputMode="decimal"
@@ -253,7 +254,7 @@ export function BuyFormClient({
           type="button"
           disabled={!canBuy || submitting}
           onClick={handleBuy}
-          className="bg-emerald text-white text-center py-[15px] rounded-xl text-[15px] font-semibold disabled:opacity-50 cursor-pointer"
+          className="bg-emerald text-white text-center min-h-11 py-[15px] rounded-xl text-[15px] font-semibold disabled:opacity-50 cursor-pointer"
         >
           {submitting ? "Buying…" : `Buy for ${formatMoney(quote?.cost ?? 0, currency)}`}
         </button>

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Logo } from "@/components/ui/logo";
 import { KidCard } from "@/components/kid-card";
 import { DebtSheet } from "@/components/debt-sheet";
+import { Money } from "@/components/ui/money";
 import { formatMoney } from "@/lib/format";
 import type { FamilyHome, KidSummary } from "@/lib/types";
 import type { DebtTransactionType } from "@/lib/types";
@@ -29,17 +30,19 @@ export function HomeClient({ home }: { home: FamilyHome }) {
       </div>
 
       <div className="px-5 pt-4 pb-1.5">
-        <div className="font-serif font-semibold text-[26px] text-emerald-dark leading-tight">
-          You owe
-        </div>
-        <div className="font-serif font-semibold text-[34px] text-emerald">
-          {formatMoney(home.total_owed, home.base_currency)}
-        </div>
-        {Number(home.total_invested) > 0 && (
-          <div className="text-[13px] font-medium text-muted mt-0.5">
-            + {formatMoney(home.total_invested, home.base_currency)} in investments
+        <div className="bg-card rounded-2xl p-4 border border-border-hairline shadow-[0_1px_3px_rgba(0,0,0,.06)]">
+          <div className="font-serif font-semibold text-[26px] text-emerald-dark leading-tight">
+            Total balance
           </div>
-        )}
+          <div className="font-serif font-semibold text-[34px] text-emerald">
+            <Money amount={home.total_owed} currency={home.base_currency} />
+          </div>
+          {Number(home.total_invested) > 0 && (
+            <div className="text-[13px] font-medium text-muted mt-0.5">
+              + {formatMoney(home.total_invested, home.base_currency)} in investments
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 px-5 pt-3.5 pb-6 flex flex-col gap-3">

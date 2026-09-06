@@ -69,13 +69,13 @@ export function DebtSheet({
         onChange={setDirection}
         options={[
           { value: "add", label: "Add" },
-          { value: "deduct", label: "Deduct" },
+          { value: "deduct", label: "Deduct", activeClassName: "bg-negative text-white" },
         ]}
       />
 
       <div className="text-center py-[18px] bg-cream rounded-2xl">
         <div className="inline-flex items-baseline gap-0.5 font-serif font-semibold text-[40px] text-emerald">
-          <span>{currencySymbol(currency)}</span>
+          <span className="font-sans">{currencySymbol(currency)}</span>
           <input
             autoFocus
             inputMode="decimal"
@@ -109,7 +109,7 @@ export function DebtSheet({
         type="button"
         disabled={submitting || parsedAmount <= 0}
         onClick={handleConfirm}
-        className="bg-emerald text-white text-center py-[15px] rounded-xl text-[15px] font-semibold disabled:opacity-50 cursor-pointer"
+        className="bg-emerald text-white text-center min-h-11 py-[15px] rounded-xl text-[15px] font-semibold disabled:opacity-50 cursor-pointer"
       >
         {submitting ? "Confirming…" : "Confirm"}
       </button>

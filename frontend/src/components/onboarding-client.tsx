@@ -115,7 +115,7 @@ export function OnboardingClient() {
         type="button"
         disabled={submitting}
         onClick={handleSubmit}
-        className="bg-emerald text-white text-center py-[15px] rounded-xl text-[15px] font-semibold disabled:opacity-50 cursor-pointer mt-2"
+        className="bg-emerald text-white text-center min-h-11 py-[15px] rounded-xl text-[15px] font-semibold disabled:opacity-50 cursor-pointer mt-2"
       >
         {submitting ? "Setting up…" : "Continue"}
       </button>
