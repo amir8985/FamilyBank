@@ -42,6 +42,35 @@ async def test_middleware_logs_a_structured_line_per_request(client, auth_header
     assert payload["duration_ms"] >= 0
 
 
+async def test_middleware_reports_zero_queries_for_a_query_free_request(client, caplog):
+    with caplog.at_level(logging.INFO, logger="app.requests"):
+        resp = await client.get("/health")
+    assert resp.status_code == 200
+
+    records = [r for r in caplog.records if r.name == "app.requests"]
+    payload = json.loads(records[-1].getMessage())
+    assert payload["db_query_count"] == 0
+    assert payload["db_time_ms"] == 0
+
+
+async def test_middleware_reports_db_query_count_and_time(client, auth_headers, seeded_asset, caplog):
+    # /catalog runs real select()s (AssetCatalog, PriceCache, FX rates) —
+    # unlike a plain db.get(Family, ...) by primary key, a select() always
+    # hits the database rather than short-circuiting through the session's
+    # identity map, so this is what actually confirms query_timing's
+    # contextvar survives SQLAlchemy's async/greenlet boundary (see
+    # core/query_timing.py) — it's not a given that it would.
+    with caplog.at_level(logging.INFO, logger="app.requests"):
+        resp = await client.get("/catalog", headers=auth_headers)
+    assert resp.status_code == 200
+
+    records = [r for r in caplog.records if r.name == "app.requests"]
+    payload = json.loads(records[-1].getMessage())
+    assert payload["path"] == "/catalog"
+    assert payload["db_query_count"] >= 1
+    assert payload["db_time_ms"] > 0
+
+
 async def test_middleware_attributes_the_request_to_its_family(client, auth_headers, user, caplog):
     with caplog.at_level(logging.INFO, logger="app.requests"):
         await client.get("/family/settings", headers=auth_headers)

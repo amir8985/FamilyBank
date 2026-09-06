@@ -19,6 +19,7 @@ import uuid
 from jose import JWTError, jwt
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from app.core import query_timing
 from app.core.config import get_settings
 from app.core.db import SessionLocal
 from app.models.request_log import RequestLog
@@ -98,6 +99,7 @@ class RequestLoggingMiddleware:
             return
 
         start = time.perf_counter()
+        query_timing.start_tracking()
         status_holder: dict[str, int | None] = {"code": None}
 
         async def send_wrapper(message: dict) -> None:
@@ -139,5 +141,12 @@ class RequestLoggingMiddleware:
                 "user_id": user_id,
                 "error": error,
             }
-            logger.info(json.dumps(entry, default=str))
+            # db_query_count/db_time_ms are diagnostic-only (stdout, not
+            # persisted — request_logs has no columns for them) — the gap
+            # between duration_ms and db_time_ms is time spent NOT running
+            # a query: Python processing, external calls, or waiting for a
+            # connection to free up.
+            db_query_count, db_time_ms = query_timing.get_query_stats()
+            log_line = {**entry, "db_query_count": db_query_count, "db_time_ms": round(db_time_ms, 1)}
+            logger.info(json.dumps(log_line, default=str))
             spawn_persist_request_log(entry)
