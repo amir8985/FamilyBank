@@ -98,13 +98,6 @@ def _catalog_sort_key(asset: AssetCatalog) -> tuple[int, str]:
     return (0 if asset.kind == AssetKind.BASKET else 1, asset.display_name)
 
 
-async def _get_price(session: AsyncSession, symbol: str) -> PriceCache:
-    price = await session.get(PriceCache, symbol)
-    if price is None:
-        raise InvestingError(f"No cached price for {symbol} yet")
-    return price
-
-
 def unit_step_for_price(price_per_unit: Decimal) -> Decimal:
     """The tradable unit granularity for a given price — a "nice" step so
     a single unit costs something sensible (between 1 and 10 in the
@@ -148,9 +141,18 @@ async def quote_purchase(
     amount: Decimal | None,
     units: Decimal | None,
 ) -> dict:
-    price = await _get_price(session, symbol)
-    price_in_family = await fx_service.convert(session, price.price, price.currency, family_currency)
-    if price_in_family <= 0:
+    # Reuses the same in-process price/FX cache the read-only screens use
+    # (load_price_context) instead of live per-call queries — both already
+    # reflect the same last-scheduler-refresh snapshot, so this loses no
+    # accuracy while cutting several sequential DB round-trips per call
+    # (each one measured at ~400ms+ in production — see the
+    # observability-logging investigation this followed from).
+    ctx = await load_price_context(session)
+    price = ctx.prices.get(symbol)
+    if price is None:
+        raise InvestingError(f"No cached price for {symbol} yet")
+    price_in_family = fx_service.convert_from_table(ctx.rates, price.price, price.currency, family_currency)
+    if price_in_family is None or price_in_family <= 0:
         raise InvestingError("Invalid price")
 
     # Snap to the asset's real tradable granularity (see unit_step_for_price)
@@ -178,12 +180,16 @@ async def buy(
     session: AsyncSession, kid: Kid, family_currency: str, symbol: str, units: Decimal
 ) -> InvestmentTransaction:
     async with transaction(session):
-        catalog_entry = await session.get(AssetCatalog, symbol)
-        if catalog_entry is None:
+        ctx = await load_price_context(session)
+        if symbol not in ctx.catalog:
             raise InvestingError(f"Unknown symbol {symbol}")
 
-        price = await _get_price(session, symbol)
-        cost_family = await fx_service.convert(session, price.price * units, price.currency, family_currency)
+        price = ctx.prices.get(symbol)
+        if price is None:
+            raise InvestingError(f"No cached price for {symbol} yet")
+        cost_family = fx_service.convert_from_table(ctx.rates, price.price * units, price.currency, family_currency)
+        if cost_family is None:
+            raise InvestingError(f"No cached FX rate for {price.currency}->{family_currency}")
 
         cash = await debts_db_service.get_balance(session, kid.id)
         if cost_family > cash:
@@ -243,8 +249,13 @@ async def sell(
         if holding is None or holding.units < units:
             raise InvestingError("Cannot sell more units than are held")
 
-        price = await _get_price(session, symbol)
-        proceeds_family = await fx_service.convert(session, price.price * units, price.currency, family_currency)
+        ctx = await load_price_context(session)
+        price = ctx.prices.get(symbol)
+        if price is None:
+            raise InvestingError(f"No cached price for {symbol} yet")
+        proceeds_family = fx_service.convert_from_table(ctx.rates, price.price * units, price.currency, family_currency)
+        if proceeds_family is None:
+            raise InvestingError(f"No cached FX rate for {price.currency}->{family_currency}")
 
         await debts_db_service.record_transaction(
             session,

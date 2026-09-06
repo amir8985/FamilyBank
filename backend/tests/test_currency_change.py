@@ -64,6 +64,14 @@ async def _seed_rate(db_session, base: str, quote: str, rate: str):
     )
     await db_session.execute(stmt)
     await db_session.flush()
+    # The real scheduler always clears investing_service's in-process
+    # price/FX cache right after writing new rates (see
+    # scheduler/jobs.py) — buy()/sell()/quote_purchase() now read
+    # through that same cache (see investing_service.py), so a helper
+    # simulating "the scheduler has this rate" needs to simulate that
+    # part too, or a rate seeded here after something already populated
+    # the cache would silently go unused.
+    investing_service.clear_price_context_cache()
 
 
 async def _clear_rate(db_session, base: str, quote: str):

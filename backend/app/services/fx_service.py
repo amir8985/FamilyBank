@@ -6,7 +6,7 @@ Convention: a cached row (base_currency=X, quote_currency=Y, rate=r) means
 amount priced in X into Y.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal
 
 import httpx
@@ -22,10 +22,12 @@ def _yahoo_fx_symbol(base: str, quote: str) -> str:
     return f"{base}{quote}=X"
 
 
-async def refresh_fx_rates(
-    session: AsyncSession, client: httpx.AsyncClient, pairs: set[tuple[str, str]]
-) -> None:
-    now = datetime.now(timezone.utc)
+async def fetch_fx_rates(
+    client: httpx.AsyncClient, pairs: set[tuple[str, str]]
+) -> list[tuple[str, str, Decimal]]:
+    """Fetches every pair's rate from Yahoo — no DB session involved (see
+    scheduler/jobs.py's _fetch_prices for why that matters)."""
+    rates = []
     for base, quote in pairs:
         if base == quote:
             continue
@@ -35,18 +37,20 @@ async def refresh_fx_rates(
             # Don't let one bad pair block the rest of the scheduler run;
             # the cached row just goes stale until the next pass.
             continue
+        rates.append((base, quote, Decimal(str(quote_data["price"]))))
+    return rates
 
+
+async def write_fx_rates(
+    session: AsyncSession, rates: list[tuple[str, str, Decimal]], now: datetime
+) -> None:
+    for base, quote, rate in rates:
         stmt = (
             insert(FxRateCache)
-            .values(
-                base_currency=base,
-                quote_currency=quote,
-                rate=Decimal(str(quote_data["price"])),
-                updated_at=now,
-            )
+            .values(base_currency=base, quote_currency=quote, rate=rate, updated_at=now)
             .on_conflict_do_update(
                 index_elements=["base_currency", "quote_currency"],
-                set_={"rate": Decimal(str(quote_data["price"])), "updated_at": now},
+                set_={"rate": rate, "updated_at": now},
             )
         )
         await session.execute(stmt)

@@ -66,6 +66,19 @@ async def test_buy_unknown_symbol_rejected(db_session, family):
         await investing_service.buy(db_session, kid, "USD", "NOPE", Decimal("1"))
 
 
+async def test_buy_rejects_cleanly_when_fx_rate_is_missing(db_session, family, seeded_asset):
+    """"ZZZ" isn't a real currency, so it's guaranteed to have no cached
+    rate (see test_portfolio_survives_missing_fx_rate's use of the same
+    trick). Previously this path raised a bare ValueError from
+    fx_service.convert() — a subclass check (`except InvestingError`)
+    doesn't catch its own parent class, so this crashed as an unhandled
+    500 instead of the clean 400 every other rejection here gets."""
+    kid = await _make_kid(db_session, family)
+    await _fund(db_session, kid, "1000")
+    with pytest.raises(investing_service.InvestingError, match="No cached FX rate"):
+        await investing_service.buy(db_session, kid, "ZZZ", "TEST", Decimal("1"))
+
+
 async def test_buying_twice_averages_cost_and_sums_units(db_session, family, seeded_asset):
     kid = await _make_kid(db_session, family)
     await _fund(db_session, kid, "1000")
@@ -201,6 +214,12 @@ async def test_since_purchase_pct_reflects_total_return_not_daily_change(db_sess
     price_row.price = Decimal("150")
     price_row.updated_at = datetime.now(timezone.utc)
     await db_session.flush()
+    # buy() now reads through the same cached price context get_portfolio
+    # does (see investing_service.py), so a direct mutation like this one
+    # needs the same cache-clear the real scheduler always does after a
+    # genuine price change — otherwise get_portfolio below would still
+    # see the pre-mutation $100 price cached from the buy() call above.
+    investing_service.clear_price_context_cache()
 
     portfolio = await investing_service.get_portfolio(db_session, kid, "USD")
     since_purchase = portfolio["holdings"][0]["since_purchase_pct"]
