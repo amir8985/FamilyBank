@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="FamilyBank API",
-    version="1.3.0",
+    version="1.4.0",
     lifespan=lifespan,
     # Swagger/ReDoc/schema map out the whole API surface (including
     # /internal/* route names) to anyone who visits them — harmless
