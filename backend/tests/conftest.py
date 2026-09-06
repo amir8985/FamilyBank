@@ -17,6 +17,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
+from app.core import request_logging
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.security import issue_session_token
@@ -27,6 +28,18 @@ from app.models.user import User
 from app.services.investing_service import clear_price_context_cache
 
 settings = get_settings()
+
+
+@pytest.fixture(autouse=True)
+def _no_request_log_persistence():
+    # RequestLoggingMiddleware writes through its own connection
+    # (SessionLocal), not the request-scoped session the `client` fixture
+    # overrides below — left enabled, every request made during the test
+    # suite would insert a real, never-rolled-back row into the shared
+    # dev/test database. See request_logging.set_persist_enabled's docstring.
+    request_logging.set_persist_enabled(False)
+    yield
+    request_logging.set_persist_enabled(True)
 
 
 @pytest_asyncio.fixture
