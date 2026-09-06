@@ -24,11 +24,19 @@ name: Android - Build signed .aab
 #      fetch and license its own.
 #   3. Answering "n" then leads to a free-text "Path to your existing
 #      Android SDK:" prompt — a blank answer isn't accepted there (it's
-#      not a bracketed-default question like the others), so it looped
-#      "The provided androidSdk isn't correct" forever. Fixed by piping
-#      the real path ($ANDROID_HOME, set by setup-android) as the answer.
+#      not a bracketed-default question like the others). Piping
+#      $ANDROID_HOME as the answer *still* looped "isn't correct" —
+#      either the prompt sequence had an extra step this didn't account
+#      for, or bubblewrap's validation wants something the runner's
+#      preinstalled SDK doesn't have. Rather than keep guessing at the
+#      interactive flow, this now writes Bubblewrap's own config file
+#      (~/.bubblewrap/config.json — the two fields it looks for are
+#      jdkPath/androidSdkPath) *before* ever invoking it, which makes it
+#      skip these prompts entirely instead of asking and validating them
+#      interactively.
 # If a *different* prompt shows up later that this doesn't cover, the
-# fix is the same pattern: pipe an answer to it.
+# fix is the same pattern: pipe an answer to it, or extend the
+# pre-written config below.
 on:
   workflow_dispatch: {}
 
@@ -60,6 +68,15 @@ jobs:
       - name: Install Bubblewrap CLI
         run: npm install -g @bubblewrap/cli
 
+      - name: Pre-configure Bubblewrap (skip its SDK/JDK prompts)
+        run: |
+          mkdir -p ~/.bubblewrap
+          SDK_PATH="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/.android/sdk}}"
+          cat > ~/.bubblewrap/config.json <<EOF
+          {"jdkPath": "${JAVA_HOME}", "androidSdkPath": "${SDK_PATH}"}
+          EOF
+          cat ~/.bubblewrap/config.json
+
       - name: Decode signing keystore
         run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > android-release.keystore
 
@@ -78,14 +95,10 @@ jobs:
           BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           BUBBLEWRAP_KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
-          # "n" = use the SDK already installed/licensed above, don't
-          # let bubblewrap fetch its own. It then asks for the SDK's
-          # path as free text — a blank answer isn't accepted there
-          # (unlike the (Y/n) questions), so it must get a real path;
-          # $ANDROID_HOME is what android-actions/setup-android set.
-          # Anything after that gets blank answers for any remaining
-          # defaults.
-          { echo "n"; echo "$ANDROID_HOME"; yes ""; } | bubblewrap build \
+          # The pre-written ~/.bubblewrap/config.json above should mean
+          # the SDK/JDK questions never get asked at all now. yes "" is
+          # kept only as a fallback for any other default-able prompt.
+          yes "" | bubblewrap build \
             --signingKeyPath=../android-release.keystore \
             --signingKeyAlias=upload
 
