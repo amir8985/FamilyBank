@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" fill="#012a14"/>
+  <circle cx="32" cy="32" r="19" fill="#012a14" stroke="#b68539" stroke-width="2"/>
+  <text x="32" y="38" font-family="Georgia, 'Source Serif 4', serif" font-weight="600" font-size="15" fill="#b68539" text-anchor="middle">FB</text>
+</svg>

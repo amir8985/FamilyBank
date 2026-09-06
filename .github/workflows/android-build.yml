@@ -1,0 +1,67 @@
+name: Android - Build signed .aab
+
+# Manual only — this isn't part of the normal web deploy pipeline
+# (pushing to master already deploys the website via Vercel/Render).
+# Run this on demand whenever you want a new Play Store build.
+#
+# First-ever run note: `bubblewrap init` scaffolds the Android project
+# from the live PWA manifest and can prompt for confirmation on some
+# values even when given --manifest directly — this workflow feeds it
+# blank input to accept defaults, but Bubblewrap's exact prompts have
+# not been verified end-to-end in this environment (no local
+# JDK/Android SDK were available to test against). If this step fails
+# or produces unexpected values on the first run, the fix is almost
+# always adjusting the piped answers below or the twa-manifest.json
+# this step generates under android/ — see android/README.md.
+on:
+  workflow_dispatch: {}
+
+env:
+  PWA_URL: https://family-bank-nine.vercel.app
+  PACKAGE_ID: com.familybank.app
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Bubblewrap CLI
+        run: npm install -g @bubblewrap/cli
+
+      - name: Decode signing keystore
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > android-release.keystore
+
+      - name: Scaffold TWA project (first run only — reuses android/ if it already exists)
+        working-directory: android
+        run: |
+          if [ ! -f twa-manifest.json ]; then
+            yes "" | bubblewrap init \
+              --manifest="${{ env.PWA_URL }}/manifest.webmanifest" \
+              --directory=. || true
+          fi
+
+      - name: Build signed app bundle
+        working-directory: android
+        env:
+          BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          BUBBLEWRAP_KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          bubblewrap build \
+            --signingKeyPath=../android-release.keystore \
+            --signingKeyAlias=upload
+
+      - name: Upload signed .aab
+        uses: actions/upload-artifact@v4
+        with:
+          name: familybank-release
+          path: android/app-release-bundle.aab

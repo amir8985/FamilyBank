@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.familybank.app",
+      "sha256_cert_fingerprints": [
+        "D1:C9:00:C5:82:94:A6:39:44:9A:82:F7:EA:58:BF:15:61:AD:3F:5D:B7:8E:D1:D6:EA:6E:6A:67:AB:CC:2F:6F"
+      ]
+    }
+  }
+]
