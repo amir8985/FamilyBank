@@ -49,6 +49,7 @@ export type DebtTransactionOut = {
   note: string | null;
   is_adjustment: boolean;
   is_investment: boolean;
+  is_savings: boolean;
   currency: string;
   previous_currency: string;
   balance_before: string;
@@ -114,11 +115,59 @@ export type LotDetailOut = {
   series: LotPointOut[];
 };
 
+export type SavingsPlanOut = {
+  id: string;
+  name: string;
+  monthly_rate: string;
+  annual_rate: string;
+  lock_months: number;
+  is_active: boolean;
+  open_deposit_count: number;
+};
+
+export type DepositablePlanOut = {
+  id: string;
+  name: string;
+  monthly_rate: string;
+  annual_rate: string;
+  lock_months: number;
+};
+
+export type SavingsDepositOut = {
+  deposit_id: string;
+  plan_name: string;
+  monthly_rate: string;
+  annual_rate: string;
+  lock_months: number;
+  is_locked: boolean;
+  matures_at: string | null;
+  is_matured: boolean;
+  principal: string;
+  current_value: string;
+  accrued_interest: string;
+  currency: string;
+  opened_at: string;
+};
+
+export type SavingsOverviewOut = {
+  savings_value: string;
+  deposits: SavingsDepositOut[];
+  plans: DepositablePlanOut[];
+};
+
+export type SavingsDepositDetailOut = SavingsDepositOut & {
+  is_open: boolean;
+  closed_at: string | null;
+  series: LotPointOut[];
+  series_currency: string;
+};
+
 export type PortfolioOut = {
   kid_id: string;
   kid_name: string;
   cash_available: string;
   holdings_value: string;
+  savings_value: string;
   total_value: string;
   total_day_change_amount: string;
   total_day_change_pct: string | null;

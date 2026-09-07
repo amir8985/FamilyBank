@@ -29,7 +29,7 @@ from app.models.investment import (
 )
 from app.models.family import Family
 from app.models.kid import Kid
-from app.services import boost_service, debts_db_service, fx_service
+from app.services import boost_service, debts_db_service, fx_service, savings_service
 from app.services.fx_service import RateTable
 
 
@@ -581,6 +581,10 @@ async def get_portfolio(session: AsyncSession, kid: Kid, family_currency: str) -
         portfolio["holdings"].append(entry)
         portfolio["holdings_value"] += entry["current_value"]
         portfolio["total_value"] += entry["current_value"]
+
+    savings = await savings_service.savings_value(session, kid.id, ctx.rates, family_currency)
+    portfolio["savings_value"] = savings
+    portfolio["total_value"] += savings
 
     return portfolio
 

@@ -31,6 +31,82 @@ backend/    FastAPI + SQLAlchemy + Postgres (Neon) — see backend/README.md
 frontend/   Next.js 16 (App Router) + Tailwind v4 — see frontend/README.md
 ```
 
+## Status as of 2026-09-07 — savings plans (backend v1.7.0 / frontend v0.8.0)
+
+**Built, tested, and verified live on branch `savings-plans` (cut from
+`9a06555`, which is `origin/master` — the stock-boost feature is already
+on master). NOT yet pushed / merged — that's gated on explicit user
+confirmation per this project's rules.**
+
+What it is: parents define **savings plans** a kid can move cash into.
+One unified model — a plan is *flexible* (`lock_months == 0`, withdraw
+any time) or *locked* (`lock_months > 0`, no withdrawal until it
+matures, then it keeps compounding at the same rate until withdrawn).
+Rate is a monthly percentage, compounded daily on read.
+
+- **Deliberately one model, not two** (this was a mid-design call by the
+  user): the parent only *creates and deletes* plans. Every
+  `SavingsDeposit` **snapshots** its plan's `plan_name` / `monthly_rate`
+  / `lock_months` at deposit time, so editing or deleting the parent's
+  `SavingsPlan` never changes money already in it (`plan_id` is
+  `ON DELETE SET NULL`; the snapshot columns are what actually drive
+  display + math). The settings UI warns the parent with the
+  open-deposit count before a delete.
+- **`savings_service` is stateless like `boost_service`** — a deposit's
+  value is `principal * (1 + rate/100) ** (elapsed_days / 30.4375)`,
+  recomputed every read, no accrued-interest column, no cron job. Only
+  ever grows (no down-ticks), so it's a plain compounding curve, not a
+  tick walk. `DAYS_PER_MONTH = 30.4375` (= 365.25/12, matches
+  `boost_service`'s `HOURS_PER_MONTH`).
+- **Deposits are whole-only** (user's call): a withdrawal closes the
+  entire deposit and pays principal + accrued interest back to the cash
+  ledger via a `debt_transactions` row with the new **`is_savings`**
+  flag (migration `0012`, `server_default false` — same safe pattern as
+  `is_investment`; history shows "Moved to savings" / "Savings payout").
+- **Migration `0012`** (`0011 → 0012`; shared dev DB is on it): adds
+  `savings_plans`, `savings_deposits`, `debt_transactions.is_savings`.
+  Checked `alembic current` against the shared DB + every sibling
+  worktree's `versions/` before taking `0012` — nothing else had it in
+  flight.
+- **Routes** (`routes_savings.py`, new): `GET/POST /family/savings-plans`,
+  `PATCH/DELETE /family/savings-plans/{id}`; `GET /kids/{id}/savings`,
+  `POST /kids/{id}/savings/deposit`, `POST /kids/{id}/savings/{id}/withdraw`,
+  `GET /kids/{id}/savings/{id}`. `PortfolioOut` gained `savings_value`.
+- **Frontend**: Settings page — Kids list moved **below** the "Advanced
+  investing & savings" link. Hub got a "Savings plans" card →
+  `/home/settings/investing/savings-plans` (list + create form, monthly
+  rate with a live **compounded** "≈ X%/year" hint — `annualFromMonthly`
+  in `lib/format.ts` mirrors `savings_service.annual_rate`; 2%/mo shows
+  ~26.8%/yr, not 24%). Kid portfolio: header → "{Name}'s Investments &
+  Savings"; segments **Portfolio / Invest / Save**; Portfolio tab shows
+  a **Savings** section above **Investments**; "Sell everything" →
+  **"Sell all investments for $X"** (+ its `confirm()` now says savings
+  aren't affected). New **Save** tab lists depositable plans →
+  `SavingsDepositSheet`. New `/home/kids/[kidId]/savings/[depositId]`
+  detail page (value, chart reusing `LotChart`, lock status + unlock
+  date, withdraw button — disabled "Locked for now" until maturity).
+- **Verified**: full backend suite 118 passed (was 101; +17 in
+  `test_savings_service.py` / `test_savings_plans.py`). `npm run
+  build` + `npm run lint` clean. Live-tested with Playwright against a
+  real dev server + the synthetic test family (minted NextAuth cookie
+  per the "Lessons learned" recipe): created plans via the form,
+  deposited into flexible + locked, opened both detail pages, withdrew
+  the flexible one (cash round-tripped correctly), confirmed the locked
+  one blocks withdrawal — zero console errors.
+- **Ghost-port bug bit again**: port 8098 (this worktree's backend per
+  `.env` at session start) had two listeners — a real one and an
+  unkillable ghost from a prior session serving stale code (openapi had
+  no savings routes). Moved the whole stack to **8099** (updated
+  `frontend/.env.local`, restarted both servers). If backend calls 404
+  on savings routes, check `netstat` for a ghost on the configured port
+  before assuming a code problem.
+- **Deferred, still**: "interest from parent" as a *separate* flat
+  cash-balance rate — this savings-plans feature is the more general
+  version of that idea, so it may now be moot; confirm with the user
+  before building it.
+- **Not done (needs user confirmation)**: push `savings-plans`, merge to
+  `master`, cut the next branch.
+
 ## Status as of 2026-09-07 — stock boost feature merged to worktree's branch (backend v1.6.0 / frontend v0.7.0)
 
 **The stock-boost feature (full detail in the "stock boost feature" status

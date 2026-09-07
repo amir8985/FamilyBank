@@ -2,16 +2,19 @@ import Link from "next/link";
 import { requireSession } from "@/lib/session";
 import { api } from "@/lib/api";
 import { PageHeader } from "@/components/ui/page-header";
-import type { FamilySettings } from "@/lib/types";
+import type { FamilySettings, SavingsPlanOut } from "@/lib/types";
 
-// A hub for special per-kid investing/savings features — right now just
-// stock boost, but built as a list of teaser cards each leading to its
-// own settings screen so a future "interest" feature slots in the same
-// way (see CLAUDE.md's boosted-stocks-and-interest status entry).
+// A hub for special per-kid investing/savings features — each is a
+// teaser card leading to its own settings screen (see CLAUDE.md's
+// boosted-stocks-and-interest / savings-plans status entries).
 export default async function InvestingSettingsPage() {
   const session = await requireSession();
-  const settings = await api.get<FamilySettings>("/family/settings", session.backendToken);
+  const [settings, plans] = await Promise.all([
+    api.get<FamilySettings>("/family/settings", session.backendToken),
+    api.get<SavingsPlanOut[]>("/family/savings-plans", session.backendToken),
+  ]);
   const boostActive = settings.boost_buffer_rate !== null;
+  const activePlanCount = plans.filter((p) => p.is_active).length;
 
   return (
     <div className="max-w-md mx-auto min-h-screen flex flex-col">
@@ -36,6 +39,27 @@ export default async function InvestingSettingsPage() {
             className="bg-emerald text-white text-center min-h-11 py-[13px] rounded-xl text-[14px] font-semibold"
           >
             Stock boost settings
+          </Link>
+        </div>
+
+        <div className="flex flex-col gap-2.5 bg-card rounded-2xl px-4 py-4 border border-border-hairline">
+          <div className="flex items-center gap-1.5">
+            <h2 className="font-serif font-semibold text-[16px] text-emerald-dark">Savings plans</h2>
+            {activePlanCount > 0 && (
+              <span className="text-[10px] font-semibold text-tint-dark bg-tint-emerald rounded-full px-1.5 py-0.5">
+                {activePlanCount} active
+              </span>
+            )}
+          </div>
+          <p className="text-[13.5px] text-muted leading-relaxed">
+            Offer your kid a place to set money aside and watch it grow. Set a monthly interest
+            rate — flexible so they can take it out any time, or locked in for a fixed stretch.
+          </p>
+          <Link
+            href="/home/settings/investing/savings-plans"
+            className="bg-emerald text-white text-center min-h-11 py-[13px] rounded-xl text-[14px] font-semibold"
+          >
+            Manage savings plans
           </Link>
         </div>
       </div>

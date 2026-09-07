@@ -69,6 +69,16 @@ export function SettingsForm({
         </button>
       </label>
 
+      <Link
+        href="/home/settings/investing"
+        className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex items-center justify-between"
+      >
+        <span className="font-semibold text-[14.5px] text-emerald-dark">
+          Advanced investing &amp; savings settings
+        </span>
+        <span className="text-emerald text-lg">›</span>
+      </Link>
+
       <div className="flex flex-col gap-2.5">
         <span className="text-[12px] font-semibold text-muted">Kids</span>
 
@@ -100,16 +110,6 @@ export function SettingsForm({
           + Add a kid
         </button>
       </div>
-
-      <Link
-        href="/home/settings/investing"
-        className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex items-center justify-between"
-      >
-        <span className="font-semibold text-[14.5px] text-emerald-dark">
-          Advanced investing &amp; savings settings
-        </span>
-        <span className="text-emerald text-lg">›</span>
-      </Link>
 
       {addKidOpen && <AddKidSheet onClose={() => setAddKidOpen(false)} />}
 

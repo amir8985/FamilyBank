@@ -22,6 +22,7 @@ def _to_out(
         note=txn.note,
         is_adjustment=txn.is_adjustment,
         is_investment=txn.is_investment,
+        is_savings=txn.is_savings,
         currency=currency,
         previous_currency=previous_currency,
         balance_before=balance_before,

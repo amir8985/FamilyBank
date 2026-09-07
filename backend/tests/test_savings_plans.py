@@ -1,0 +1,178 @@
+"""Savings plan management (parent) + deposit/withdraw (kid) over the
+HTTP surface, plus the tenant-isolation guard architecture 5.5 asks for
+on every family-scoped resource."""
+
+from decimal import Decimal
+
+from app.core.security import issue_session_token
+from app.models.family import Family
+from app.models.kid import Kid
+from app.models.user import User
+from app.services import debts_db_service
+from app.services.debts_db_service import DebtTransactionType
+
+
+async def _kid(db_session, family, name="Kid") -> Kid:
+    kid = Kid(family_id=family.id, name=name, avatar_color="amber")
+    db_session.add(kid)
+    await db_session.flush()
+    return kid
+
+
+async def _second_family_headers(db_session) -> dict[str, str]:
+    other = Family(base_currency="EUR", onboarding_completed=True)
+    db_session.add(other)
+    await db_session.flush()
+    user = User(family_id=other.id, email="other@example.com", google_sub="other-sub")
+    db_session.add(user)
+    await db_session.flush()
+    return {"Authorization": f"Bearer {issue_session_token(user.id, other.id, user.email)}"}
+
+
+async def test_create_list_and_delete_a_plan(client, auth_headers, family, db_session):
+    create = await client.post(
+        "/family/savings-plans",
+        headers=auth_headers,
+        json={"name": "Rainy day", "monthly_rate": 1.5, "lock_months": 0},
+    )
+    assert create.status_code == 201
+    body = create.json()
+    assert body["lock_months"] == 0
+    assert Decimal(body["annual_rate"]) > Decimal("1.5")  # compounded > monthly
+    plan_id = body["id"]
+
+    listed = await client.get("/family/savings-plans", headers=auth_headers)
+    assert [p["id"] for p in listed.json()] == [plan_id]
+
+    deleted = await client.delete(f"/family/savings-plans/{plan_id}", headers=auth_headers)
+    assert deleted.status_code == 204
+    assert await client.get("/family/savings-plans", headers=auth_headers) is not None
+    assert (await client.get("/family/savings-plans", headers=auth_headers)).json() == []
+
+
+async def test_editing_a_plan_does_not_touch_existing_deposits(client, auth_headers, family, db_session):
+    kid = await _kid(db_session, family)
+    await debts_db_service.record_transaction(db_session, kid.id, DebtTransactionType.ADD, Decimal("100"))
+    await db_session.commit()
+
+    plan_id = (
+        await client.post(
+            "/family/savings-plans",
+            headers=auth_headers,
+            json={"name": "Flex", "monthly_rate": 1.0, "lock_months": 0},
+        )
+    ).json()["id"]
+
+    dep = await client.post(
+        f"/kids/{kid.id}/savings/deposit", headers=auth_headers, json={"plan_id": plan_id, "amount": 50}
+    )
+    assert dep.status_code == 201
+    assert Decimal(dep.json()["monthly_rate"]) == Decimal("1.000")
+
+    await client.patch(
+        f"/family/savings-plans/{plan_id}",
+        headers=auth_headers,
+        json={"monthly_rate": 8.0, "lock_months": 12},
+    )
+
+    overview = await client.get(f"/kids/{kid.id}/savings", headers=auth_headers)
+    deposit = overview.json()["deposits"][0]
+    assert Decimal(deposit["monthly_rate"]) == Decimal("1.000")
+    assert deposit["lock_months"] == 0
+
+
+async def test_delete_reports_open_deposit_count_for_the_warning(client, auth_headers, family, db_session):
+    kid = await _kid(db_session, family)
+    await debts_db_service.record_transaction(db_session, kid.id, DebtTransactionType.ADD, Decimal("100"))
+    await db_session.commit()
+    plan_id = (
+        await client.post(
+            "/family/savings-plans",
+            headers=auth_headers,
+            json={"name": "Flex", "monthly_rate": 1.0, "lock_months": 0},
+        )
+    ).json()["id"]
+    await client.post(
+        f"/kids/{kid.id}/savings/deposit", headers=auth_headers, json={"plan_id": plan_id, "amount": 20}
+    )
+
+    plans = (await client.get("/family/savings-plans", headers=auth_headers)).json()
+    assert plans[0]["open_deposit_count"] == 1
+
+    # Deleting still works — the deposit is left untouched, just unlinked.
+    assert (await client.delete(f"/family/savings-plans/{plan_id}", headers=auth_headers)).status_code == 204
+    overview = await client.get(f"/kids/{kid.id}/savings", headers=auth_headers)
+    assert len(overview.json()["deposits"]) == 1
+
+
+async def test_deposit_then_withdraw_round_trips_cash(client, auth_headers, family, db_session):
+    kid = await _kid(db_session, family)
+    await debts_db_service.record_transaction(db_session, kid.id, DebtTransactionType.ADD, Decimal("100"))
+    await db_session.commit()
+    plan_id = (
+        await client.post(
+            "/family/savings-plans",
+            headers=auth_headers,
+            json={"name": "Flex", "monthly_rate": 1.0, "lock_months": 0},
+        )
+    ).json()["id"]
+
+    dep = await client.post(
+        f"/kids/{kid.id}/savings/deposit", headers=auth_headers, json={"plan_id": plan_id, "amount": 60}
+    )
+    deposit_id = dep.json()["deposit_id"]
+    portfolio = await client.get(f"/kids/{kid.id}/portfolio", headers=auth_headers)
+    assert Decimal(portfolio.json()["cash_available"]) == Decimal("40.00")
+
+    wd = await client.post(
+        f"/kids/{kid.id}/savings/{deposit_id}/withdraw", headers=auth_headers
+    )
+    assert wd.status_code == 200
+    assert wd.json()["is_open"] is False
+    portfolio = await client.get(f"/kids/{kid.id}/portfolio", headers=auth_headers)
+    assert Decimal(portfolio.json()["cash_available"]) >= Decimal("100.00")
+
+
+async def test_locked_deposit_withdrawal_is_rejected_over_http(client, auth_headers, family, db_session):
+    kid = await _kid(db_session, family)
+    await debts_db_service.record_transaction(db_session, kid.id, DebtTransactionType.ADD, Decimal("100"))
+    await db_session.commit()
+    plan_id = (
+        await client.post(
+            "/family/savings-plans",
+            headers=auth_headers,
+            json={"name": "Locked", "monthly_rate": 2.0, "lock_months": 6},
+        )
+    ).json()["id"]
+    deposit_id = (
+        await client.post(
+            f"/kids/{kid.id}/savings/deposit", headers=auth_headers, json={"plan_id": plan_id, "amount": 50}
+        )
+    ).json()["deposit_id"]
+
+    wd = await client.post(f"/kids/{kid.id}/savings/{deposit_id}/withdraw", headers=auth_headers)
+    assert wd.status_code == 400
+
+
+async def test_cannot_touch_another_familys_plans_or_deposit_for_their_kid(
+    client, auth_headers, family, db_session
+):
+    kid = await _kid(db_session, family)
+    await debts_db_service.record_transaction(db_session, kid.id, DebtTransactionType.ADD, Decimal("100"))
+    await db_session.commit()
+    plan_id = (
+        await client.post(
+            "/family/savings-plans",
+            headers=auth_headers,
+            json={"name": "Mine", "monthly_rate": 1.0, "lock_months": 0},
+        )
+    ).json()["id"]
+
+    other = await _second_family_headers(db_session)
+    assert (await client.patch(f"/family/savings-plans/{plan_id}", headers=other, json={"name": "x"})).status_code == 404
+    assert (await client.delete(f"/family/savings-plans/{plan_id}", headers=other)).status_code == 404
+    assert (
+        await client.post(
+            f"/kids/{kid.id}/savings/deposit", headers=other, json={"plan_id": plan_id, "amount": 10}
+        )
+    ).status_code == 404

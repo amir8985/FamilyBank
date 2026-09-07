@@ -32,9 +32,13 @@ export default async function KidHistoryPage({
               ? t.type === "add"
                 ? "Sold"
                 : "Bought"
-              : t.type === "add"
-                ? "Added"
-                : "Deducted";
+              : t.is_savings
+                ? t.type === "add"
+                  ? "Savings payout"
+                  : "Moved to savings"
+                : t.type === "add"
+                  ? "Added"
+                  : "Deducted";
           return (
             <div
               key={t.id}
