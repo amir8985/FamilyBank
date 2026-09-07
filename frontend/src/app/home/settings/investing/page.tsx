@@ -14,55 +14,70 @@ export default async function InvestingSettingsPage() {
     api.get<SavingsPlanOut[]>("/family/savings-plans", session.backendToken),
   ]);
   const boostActive = settings.boost_buffer_rate !== null;
-  const activePlanCount = plans.filter((p) => p.is_active).length;
+  const flexibleActive = plans.some((p) => p.is_active && p.lock_months === 0);
+  const lockedActive = plans.some((p) => p.is_active && p.lock_months > 0);
 
   return (
     <div className="max-w-md mx-auto min-h-screen flex flex-col">
       <PageHeader title="Advanced investing & savings" backHref="/home/settings" />
 
       <div className="flex flex-col gap-3 px-5 pt-4 pb-8">
-        <div className="flex flex-col gap-2.5 bg-card rounded-2xl px-4 py-4 border border-border-hairline">
-          <div className="flex items-center gap-1.5">
-            <h2 className="font-serif font-semibold text-[16px] text-emerald-dark">Stock boost</h2>
-            {boostActive && (
-              <span className="text-[10px] font-semibold text-tint-dark bg-tint-emerald rounded-full px-1.5 py-0.5">
-                Active
-              </span>
-            )}
-          </div>
-          <p className="text-[13.5px] text-muted leading-relaxed">
-            Real stock moves can feel painfully slow for kids on small amounts. A boost gives your
-            kid&apos;s gains a little extra kick — so investing feels worth their while.
-          </p>
-          <Link
-            href="/home/settings/investing/boost"
-            className="bg-emerald text-white text-center min-h-11 py-[13px] rounded-xl text-[14px] font-semibold"
-          >
-            Stock boost settings
-          </Link>
-        </div>
-
-        <div className="flex flex-col gap-2.5 bg-card rounded-2xl px-4 py-4 border border-border-hairline">
-          <div className="flex items-center gap-1.5">
-            <h2 className="font-serif font-semibold text-[16px] text-emerald-dark">Savings plans</h2>
-            {activePlanCount > 0 && (
-              <span className="text-[10px] font-semibold text-tint-dark bg-tint-emerald rounded-full px-1.5 py-0.5">
-                {activePlanCount} active
-              </span>
-            )}
-          </div>
-          <p className="text-[13.5px] text-muted leading-relaxed">
-            Offer your kid a place to set money aside and watch it grow. Set a monthly interest
-            rate — flexible so they can take it out any time, or locked in for a fixed stretch.
-          </p>
-          <Link
-            href="/home/settings/investing/savings-plans"
-            className="bg-emerald text-white text-center min-h-11 py-[13px] rounded-xl text-[14px] font-semibold"
-          >
-            Manage savings plans
-          </Link>
-        </div>
+        <Card
+          title="Stock boost"
+          active={boostActive}
+          blurb="Real stock moves can feel painfully slow for kids on small amounts. A boost gives your kid's gains a little extra kick — so investing feels worth their while."
+          href="/home/settings/investing/boost"
+          cta="Stock boost settings"
+        />
+        <Card
+          title="Flexible savings"
+          active={flexibleActive}
+          blurb="A place for your kid to set money aside and earn interest on it — with no strings, so they can take it back out whenever they want."
+          href="/home/settings/investing/savings/flexible"
+          cta="Flexible savings settings"
+        />
+        <Card
+          title="Locked savings"
+          active={lockedActive}
+          blurb="Higher interest in exchange for leaving the money untouched for a set stretch — a month, a few months, up to a year."
+          href="/home/settings/investing/savings/locked"
+          cta="Locked savings settings"
+        />
       </div>
+    </div>
+  );
+}
+
+function Card({
+  title,
+  active,
+  blurb,
+  href,
+  cta,
+}: {
+  title: string;
+  active: boolean;
+  blurb: string;
+  href: string;
+  cta: string;
+}) {
+  return (
+    <div className="flex flex-col gap-2.5 bg-card rounded-2xl px-4 py-4 border border-border-hairline">
+      <div className="flex items-center gap-1.5">
+        <h2 className="font-serif font-semibold text-[16px] text-emerald-dark">{title}</h2>
+        {active && (
+          <span className="text-[10px] font-semibold text-tint-dark bg-tint-emerald rounded-full px-1.5 py-0.5">
+            Active
+          </span>
+        )}
+      </div>
+      <p className="text-[13.5px] text-muted leading-relaxed">{blurb}</p>
+      <Link
+        href={href}
+        className="bg-emerald text-white text-center min-h-11 py-[13px] rounded-xl text-[14px] font-semibold"
+      >
+        {cta}
+      </Link>
     </div>
   );
 }

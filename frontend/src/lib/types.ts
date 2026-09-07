@@ -123,6 +123,16 @@ export type SavingsPlanOut = {
   lock_months: number;
   is_active: boolean;
   open_deposit_count: number;
+  preset_key: string | null;
+};
+
+export type SavingsPresetOut = {
+  key: string;
+  name: string;
+  monthly_rate: string;
+  annual_rate: string;
+  lock_months: number;
+  kind: "flexible" | "locked";
 };
 
 export type DepositablePlanOut = {

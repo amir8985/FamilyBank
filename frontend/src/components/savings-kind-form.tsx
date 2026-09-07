@@ -3,36 +3,58 @@
 import { useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { SegmentedControl } from "@/components/ui/segmented-control";
 import { api, ApiError } from "@/lib/api";
 import { annualFromMonthly } from "@/lib/format";
-import type { SavingsPlanOut } from "@/lib/types";
+import type { SavingsPlanOut, SavingsPresetOut } from "@/lib/types";
 
-const DEFAULT_RATE = 1.0;
-const DEFAULT_LOCK_MONTHS = 6;
+type Kind = "flexible" | "locked";
 
 function clampRate(v: number): number {
   return Math.min(100, Math.max(0.1, Math.round(v * 10) / 10));
 }
 
-function planTypeLabel(lockMonths: number): string {
+function termLabel(lockMonths: number): string {
   if (lockMonths <= 0) return "Flexible — withdraw any time";
+  if (lockMonths === 12) return "Locked for 1 year";
   return `Locked for ${lockMonths} ${lockMonths === 1 ? "month" : "months"}`;
 }
 
-export function SavingsPlansForm({ initialPlans }: { initialPlans: SavingsPlanOut[] }) {
+export function SavingsKindForm({
+  kind,
+  plans,
+  presets,
+}: {
+  kind: Kind;
+  plans: SavingsPlanOut[];
+  presets: SavingsPresetOut[];
+}) {
   const { data: session } = useSession();
   const router = useRouter();
 
-  const [kind, setKind] = useState<"flexible" | "locked">("flexible");
+  const kindPresets = presets.filter((p) => p.kind === kind);
+  const inKind = (p: SavingsPlanOut) => (kind === "flexible" ? p.lock_months === 0 : p.lock_months > 0);
+  const customPlans = plans.filter((p) => p.preset_key === null && inKind(p));
+
   const [name, setName] = useState("");
-  const [rate, setRate] = useState(DEFAULT_RATE);
-  const [lockMonths, setLockMonths] = useState(DEFAULT_LOCK_MONTHS);
+  const [rate, setRate] = useState(kind === "locked" ? 3.0 : 1.0);
+  const [lockMonths, setLockMonths] = useState(6);
   const [creating, setCreating] = useState(false);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const annual = annualFromMonthly(rate);
+  async function togglePreset(preset: SavingsPresetOut, on: boolean) {
+    if (!session?.backendToken) return;
+    setBusyKey(preset.key);
+    setError(null);
+    try {
+      await api.post("/family/savings-presets", session.backendToken, { key: preset.key, active: on });
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Something went wrong");
+    } finally {
+      setBusyKey(null);
+    }
+  }
 
   async function handleCreate() {
     if (!session?.backendToken || !name.trim()) return;
@@ -45,30 +67,13 @@ export function SavingsPlansForm({ initialPlans }: { initialPlans: SavingsPlanOu
         lock_months: kind === "locked" ? lockMonths : 0,
       });
       setName("");
-      setRate(DEFAULT_RATE);
-      setLockMonths(DEFAULT_LOCK_MONTHS);
-      setKind("flexible");
+      setRate(kind === "locked" ? 3.0 : 1.0);
+      setLockMonths(6);
       router.refresh();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Something went wrong");
     } finally {
       setCreating(false);
-    }
-  }
-
-  async function handleToggleActive(plan: SavingsPlanOut) {
-    if (!session?.backendToken) return;
-    setBusyId(plan.id);
-    setError(null);
-    try {
-      await api.patch(`/family/savings-plans/${plan.id}`, session.backendToken, {
-        is_active: !plan.is_active,
-      });
-      router.refresh();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Something went wrong");
-    } finally {
-      setBusyId(null);
     }
   }
 
@@ -81,7 +86,7 @@ export function SavingsPlansForm({ initialPlans }: { initialPlans: SavingsPlanOu
           } in this plan. Deleting it won't touch those savings — they keep growing at the same rate — you just can't add new money to it. Delete anyway?`
         : `Delete "${plan.name}"?`;
     if (!confirm(warning)) return;
-    setBusyId(plan.id);
+    setBusyKey(plan.id);
     setError(null);
     try {
       await api.delete(`/family/savings-plans/${plan.id}`, session.backendToken);
@@ -89,35 +94,72 @@ export function SavingsPlansForm({ initialPlans }: { initialPlans: SavingsPlanOu
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Something went wrong");
     } finally {
-      setBusyId(null);
+      setBusyKey(null);
     }
   }
 
   return (
     <div className="flex flex-col gap-6 px-5 pt-4 pb-10">
       <div className="flex flex-col gap-3 text-[13.5px] text-muted leading-relaxed">
+        {kind === "flexible" ? (
+          <p>
+            Your kid can move cash into a flexible plan and pull it back out any time. It earns
+            interest every day it&apos;s in there.
+          </p>
+        ) : (
+          <p>
+            A locked plan can&apos;t be touched until its term is up — in exchange for a higher
+            rate. When the term ends it keeps earning the same rate until your kid withdraws.
+          </p>
+        )}
         <p>
-          A savings plan is a place for your kid to park cash and earn interest on it. You set the
-          rate; they see it grow a little every day.
-        </p>
-        <p>
-          The rate is <strong>monthly</strong>. It compounds, so a monthly rate works out to a lot
-          more over a year — the yearly figure is shown next to each plan.
-        </p>
-        <p>
-          A <strong>flexible</strong> plan can be cashed out any time. A <strong>locked</strong>{" "}
-          plan can&apos;t be touched until its term is up — then it keeps earning the same rate
-          until your kid withdraws it.
+          Rates are <strong>monthly</strong> and compound, so the yearly figure (shown on each
+          plan) works out higher than twelve times the monthly one.
         </p>
       </div>
 
-      {initialPlans.length > 0 && (
+      <div className="flex flex-col gap-2.5">
+        <span className="text-[12px] font-semibold text-muted">Ready-made plans</span>
+        {kindPresets.map((preset) => {
+          const existing = plans.find((p) => p.preset_key === preset.key);
+          const on = Boolean(existing?.is_active);
+          return (
+            <label
+              key={preset.key}
+              className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex items-center justify-between gap-3 cursor-pointer"
+            >
+              <div>
+                <div className="font-semibold text-[14.5px] text-emerald-dark">{preset.name}</div>
+                <div className="text-[12px] text-muted">
+                  {Number(preset.monthly_rate).toFixed(1)}%/mo · ≈ {Number(preset.annual_rate).toFixed(1)}%/year
+                  {kind === "locked" ? ` · ${termLabel(preset.lock_months).replace("Locked for ", "")}` : ""}
+                </div>
+                {existing && !existing.is_active && existing.open_deposit_count > 0 && (
+                  <div className="text-[11px] text-muted mt-0.5">
+                    Off, but {existing.open_deposit_count} deposit
+                    {existing.open_deposit_count === 1 ? "" : "s"} still growing in it
+                  </div>
+                )}
+              </div>
+              <input
+                type="checkbox"
+                checked={on}
+                disabled={busyKey === preset.key}
+                onChange={(e) => togglePreset(preset, e.target.checked)}
+                className="w-5 h-5 accent-emerald cursor-pointer shrink-0"
+              />
+            </label>
+          );
+        })}
+      </div>
+
+      {customPlans.length > 0 && (
         <div className="flex flex-col gap-2.5">
-          <span className="text-[12px] font-semibold text-muted">Your plans</span>
-          {initialPlans.map((plan) => (
+          <span className="text-[12px] font-semibold text-muted">Your own plans</span>
+          {customPlans.map((plan) => (
             <div
               key={plan.id}
-              className={`bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex flex-col gap-1.5 ${
+              className={`bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex flex-col gap-1 ${
                 plan.is_active ? "" : "opacity-60"
               }`}
             >
@@ -128,7 +170,7 @@ export function SavingsPlansForm({ initialPlans }: { initialPlans: SavingsPlanOu
                 </span>
               </div>
               <div className="flex items-center justify-between gap-2 text-[12px] text-muted">
-                <span>{planTypeLabel(plan.lock_months)}</span>
+                <span>{termLabel(plan.lock_months)}</span>
                 <span>≈ {Number(plan.annual_rate).toFixed(1)}%/year</span>
               </div>
               {plan.open_deposit_count > 0 && (
@@ -136,51 +178,32 @@ export function SavingsPlansForm({ initialPlans }: { initialPlans: SavingsPlanOu
                   {plan.open_deposit_count} open deposit{plan.open_deposit_count === 1 ? "" : "s"}
                 </span>
               )}
-              <div className="flex gap-4 pt-1">
-                <button
-                  type="button"
-                  disabled={busyId === plan.id}
-                  onClick={() => handleToggleActive(plan)}
-                  className="text-[12.5px] font-semibold text-emerald cursor-pointer disabled:opacity-50"
-                >
-                  {plan.is_active ? "Hide from kids" : "Make available"}
-                </button>
-                <button
-                  type="button"
-                  disabled={busyId === plan.id}
-                  onClick={() => handleDelete(plan)}
-                  className="text-[12.5px] font-semibold text-negative cursor-pointer disabled:opacity-50"
-                >
-                  Delete
-                </button>
-              </div>
+              <button
+                type="button"
+                disabled={busyKey === plan.id}
+                onClick={() => handleDelete(plan)}
+                className="self-start text-[12.5px] font-semibold text-negative cursor-pointer disabled:opacity-50 pt-1"
+              >
+                Delete
+              </button>
             </div>
           ))}
         </div>
       )}
 
       <div className="flex flex-col gap-3">
-        <span className="text-[12px] font-semibold text-muted">Add a plan</span>
+        <span className="text-[12px] font-semibold text-muted">Add your own</span>
 
         <label className="flex flex-col gap-1.5">
           <span className="text-[12px] font-semibold text-muted">Name</span>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Rainy day fund"
+            placeholder={kind === "locked" ? "e.g. Summer camp fund" : "e.g. Rainy day fund"}
             maxLength={60}
             className="border border-border-hairline-strong rounded-[10px] px-3.5 py-3 text-[14.5px] text-emerald-dark outline-none focus:border-emerald bg-card"
           />
         </label>
-
-        <SegmentedControl
-          value={kind}
-          onChange={setKind}
-          options={[
-            { value: "flexible", label: "Flexible" },
-            { value: "locked", label: "Locked" },
-          ]}
-        />
 
         {kind === "locked" && (
           <div className="flex flex-col gap-1.5">
@@ -233,7 +256,7 @@ export function SavingsPlansForm({ initialPlans }: { initialPlans: SavingsPlanOu
             </button>
           </div>
           <p className="text-[11.5px] text-muted/80">
-            ≈ {annual.toFixed(1)}%/year once it compounds.
+            ≈ {annualFromMonthly(rate).toFixed(1)}%/year once it compounds.
           </p>
         </div>
 

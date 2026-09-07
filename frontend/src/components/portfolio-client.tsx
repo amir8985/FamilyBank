@@ -253,24 +253,37 @@ export function PortfolioClient({
               Move cash into a savings plan and it earns interest every day. Flexible plans come out
               any time; locked plans stay put until their term is up.
             </p>
-            {savings.plans.map((plan) => (
-              <div
-                key={plan.id}
-                className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex items-center justify-between gap-3"
-              >
-                <div>
-                  <div className="font-semibold text-[15px] text-emerald-dark">{plan.name}</div>
-                  <div className="text-[12.5px] text-muted">{planTypeLine(plan)}</div>
+            {(["flexible", "locked"] as const).map((group) => {
+              const groupPlans = savings.plans.filter((p) =>
+                group === "flexible" ? p.lock_months === 0 : p.lock_months > 0,
+              );
+              if (groupPlans.length === 0) return null;
+              return (
+                <div key={group} className="flex flex-col gap-2.5">
+                  <h2 className="font-serif font-semibold text-[15px] text-emerald-dark pt-2">
+                    {group === "flexible" ? "Flexible" : "Locked"}
+                  </h2>
+                  {groupPlans.map((plan) => (
+                    <div
+                      key={plan.id}
+                      className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex items-center justify-between gap-3"
+                    >
+                      <div>
+                        <div className="font-semibold text-[15px] text-emerald-dark">{plan.name}</div>
+                        <div className="text-[12.5px] text-muted">{planTypeLine(plan)}</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setDepositPlan(plan)}
+                        className="shrink-0 bg-emerald text-white min-h-11 px-4 rounded-xl text-[13px] font-semibold cursor-pointer"
+                      >
+                        Put money in
+                      </button>
+                    </div>
+                  ))}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setDepositPlan(plan)}
-                  className="shrink-0 bg-emerald text-white min-h-11 px-4 rounded-xl text-[13px] font-semibold cursor-pointer"
-                >
-                  Put money in
-                </button>
-              </div>
-            ))}
+              );
+            })}
             {savings.plans.length === 0 && (
               <p className="text-center text-[13px] text-muted pt-4">
                 No savings plans yet — a parent can add them under Settings › Advanced investing &amp;

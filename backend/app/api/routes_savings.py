@@ -15,6 +15,8 @@ from app.schemas.savings import (
     SavingsPlanCreate,
     SavingsPlanOut,
     SavingsPlanUpdate,
+    SavingsPresetOut,
+    SavingsPresetToggle,
 )
 from app.services import savings_service
 
@@ -32,6 +34,7 @@ async def _plan_out(db: AsyncSession, plan: SavingsPlan, counts: dict[uuid.UUID,
         lock_months=plan.lock_months,
         is_active=plan.is_active,
         open_deposit_count=counts.get(plan.id, 0),
+        preset_key=plan.preset_key,
     )
 
 
@@ -71,6 +74,25 @@ async def create_savings_plan(
     await db.commit()
     await db.refresh(plan)
     return await _plan_out(db, plan)
+
+
+@router.get("/family/savings-presets", response_model=list[SavingsPresetOut])
+async def list_savings_presets(family: Family = Depends(get_family)) -> list[SavingsPresetOut]:
+    return [SavingsPresetOut(**p) for p in savings_service.preset_catalog()]
+
+
+@router.post("/family/savings-presets", status_code=204)
+async def toggle_savings_preset(
+    body: SavingsPresetToggle, family: Family = Depends(get_family), db: AsyncSession = Depends(get_db)
+) -> None:
+    try:
+        if body.active:
+            await savings_service.activate_preset(db, family.id, body.key)
+        else:
+            await savings_service.deactivate_preset(db, family.id, body.key)
+    except savings_service.SavingsError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    await db.commit()
 
 
 @router.patch("/family/savings-plans/{plan_id}", response_model=SavingsPlanOut)

@@ -36,6 +36,10 @@ class SavingsPlan(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     monthly_rate: Mapped[Decimal] = mapped_column(Numeric(6, 3))
     lock_months: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Set when the parent turned this on from a built-in preset (see
+    # savings_service.PRESET_PLANS); NULL for a plan they typed in
+    # themselves. At most one plan per family per preset_key.
+    preset_key: Mapped[str | None] = mapped_column(nullable=True)
 
 
 class SavingsDeposit(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):

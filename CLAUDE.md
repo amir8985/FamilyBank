@@ -73,11 +73,13 @@ Rate is a monthly percentage, compounded daily on read.
   `POST /kids/{id}/savings/deposit`, `POST /kids/{id}/savings/{id}/withdraw`,
   `GET /kids/{id}/savings/{id}`. `PortfolioOut` gained `savings_value`.
 - **Frontend**: Settings page — Kids list moved **below** the "Advanced
-  investing & savings" link. Hub got a "Savings plans" card →
-  `/home/settings/investing/savings-plans` (list + create form, monthly
-  rate with a live **compounded** "≈ X%/year" hint — `annualFromMonthly`
-  in `lib/format.ts` mirrors `savings_service.annual_rate`; 2%/mo shows
-  ~26.8%/yr, not 24%). Kid portfolio: header → "{Name}'s Investments &
+  investing & savings" link. Hub savings settings — **see the "Second
+  round" bullet below for the current shape** (this first pass had a
+  single `/savings-plans` screen; it was split into flexible/locked +
+  presets before commit). Live **compounded** "≈ X%/year" hint —
+  `annualFromMonthly` in `lib/format.ts` mirrors
+  `savings_service.annual_rate` (2%/mo shows ~26.8%/yr, not 24%). Kid
+  portfolio: header → "{Name}'s Investments &
   Savings"; segments **Portfolio / Invest / Save**; Portfolio tab shows
   a **Savings** section above **Investments**; "Sell everything" →
   **"Sell all investments for $X"** (+ its `confirm()` now says savings
@@ -100,6 +102,29 @@ Rate is a monthly percentage, compounded daily on read.
   `frontend/.env.local`, restarted both servers). If backend calls 404
   on savings routes, check `netstat` for a ghost on the configured port
   before assuming a code problem.
+- **Second round (same session, user feedback): split + presets.** The
+  single "Savings plans" settings screen was split into **two** — the
+  hub now has separate "Flexible savings" and "Locked savings" cards,
+  each with its own `Active` pill (true if ≥1 active plan of that kind)
+  and its own page at `/home/settings/investing/savings/[kind]`
+  (`kind` = `flexible` | `locked`, one shared `SavingsKindForm`
+  component). Each page leads with **ready-made preset plans** the
+  parent switches on/off with a checkbox — they don't have to invent
+  one. Presets live in `savings_service.PRESET_PLANS` (code, not
+  seeded): flexible "Everyday savings" 1%/mo; locked 1mo/1.5%,
+  3mo/2%, 6mo/2.5%, 12mo/3%. Migration `0013` adds
+  `savings_plans.preset_key` (NULL = a custom plan the parent typed).
+  `POST /family/savings-presets` `{key, active}` toggles one:
+  activating creates-or-reactivates the family's plan row for that
+  key; deactivating **deletes** the row if empty, or just flips
+  `is_active=false` if a kid still has money in it (their deposit keeps
+  growing regardless). `GET /family/savings-presets` is the static
+  catalog. Custom "Add your own" form is still there under the presets,
+  now kind-scoped (no lock stepper on the flexible page; locked
+  defaults 6 months / 3%). Kid's Save tab groups plans under
+  **Flexible** / **Locked** headings. 21 savings tests pass, full
+  suite green, build/lint clean, re-verified live with Playwright
+  (toggled presets on both pages, confirmed hub pills + kid Save tab).
 - **Deferred, still**: "interest from parent" as a *separate* flat
   cash-balance rate — this savings-plans feature is the more general
   version of that idea, so it may now be moot; confirm with the user

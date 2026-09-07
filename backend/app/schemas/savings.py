@@ -26,6 +26,21 @@ class SavingsPlanOut(BaseModel):
     lock_months: int
     is_active: bool
     open_deposit_count: int
+    preset_key: str | None = None
+
+
+class SavingsPresetOut(BaseModel):
+    key: str
+    name: str
+    monthly_rate: Decimal
+    annual_rate: Decimal
+    lock_months: int
+    kind: str
+
+
+class SavingsPresetToggle(BaseModel):
+    key: str
+    active: bool
 
 
 class DepositablePlanOut(BaseModel):

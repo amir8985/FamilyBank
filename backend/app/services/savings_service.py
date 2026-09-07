@@ -37,6 +37,72 @@ class SavingsError(ValueError):
     pass
 
 
+# Built-in plans a parent can switch on with one tap instead of typing
+# their own — one flexible, four locked terms. `key` is stable and is
+# what SavingsPlan.preset_key stores; changing a preset's rate/name here
+# does NOT retro-change plans already switched on (they're their own
+# rows, and every deposit snapshots its terms regardless).
+PRESET_PLANS: list[dict] = [
+    {"key": "flex", "name": "Everyday savings", "monthly_rate": Decimal("1.0"), "lock_months": 0},
+    {"key": "locked-1m", "name": "1-month plan", "monthly_rate": Decimal("1.5"), "lock_months": 1},
+    {"key": "locked-3m", "name": "3-month plan", "monthly_rate": Decimal("2.0"), "lock_months": 3},
+    {"key": "locked-6m", "name": "6-month plan", "monthly_rate": Decimal("2.5"), "lock_months": 6},
+    {"key": "locked-12m", "name": "1-year plan", "monthly_rate": Decimal("3.0"), "lock_months": 12},
+]
+_PRESETS_BY_KEY = {p["key"]: p for p in PRESET_PLANS}
+
+
+def preset_catalog() -> list[dict]:
+    return [
+        {
+            **p,
+            "annual_rate": annual_rate(p["monthly_rate"]),
+            "kind": "locked" if p["lock_months"] > 0 else "flexible",
+        }
+        for p in PRESET_PLANS
+    ]
+
+
+async def activate_preset(session: AsyncSession, family_id: uuid.UUID, key: str) -> SavingsPlan:
+    preset = _PRESETS_BY_KEY.get(key)
+    if preset is None:
+        raise SavingsError("Unknown savings preset")
+    existing = await session.scalar(
+        select(SavingsPlan).where(SavingsPlan.family_id == family_id, SavingsPlan.preset_key == key)
+    )
+    if existing is not None:
+        existing.is_active = True
+        await session.flush()
+        return existing
+    plan = SavingsPlan(
+        family_id=family_id,
+        name=preset["name"],
+        monthly_rate=preset["monthly_rate"],
+        lock_months=preset["lock_months"],
+        preset_key=key,
+    )
+    session.add(plan)
+    await session.flush()
+    return plan
+
+
+async def deactivate_preset(session: AsyncSession, family_id: uuid.UUID, key: str) -> None:
+    """Turns a preset off. If a kid still has money in it, the plan row
+    (and their deposit) is kept and just hidden; otherwise the empty row
+    is deleted so the family's plan list stays tidy."""
+    plan = await session.scalar(
+        select(SavingsPlan).where(SavingsPlan.family_id == family_id, SavingsPlan.preset_key == key)
+    )
+    if plan is None:
+        return
+    counts = await open_deposit_counts(session, family_id)
+    if counts.get(plan.id, 0) > 0:
+        plan.is_active = False
+    else:
+        await session.delete(plan)
+    await session.flush()
+
+
 def annual_rate(monthly_rate: Decimal) -> Decimal:
     """The compounded yearly equivalent of a monthly rate, as a percent —
     2%/month is ~26.8%/year, not 24%. Shown next to every rate the parent

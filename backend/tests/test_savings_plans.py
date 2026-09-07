@@ -154,6 +154,75 @@ async def test_locked_deposit_withdrawal_is_rejected_over_http(client, auth_head
     assert wd.status_code == 400
 
 
+async def test_presets_catalog_has_one_flexible_and_several_locked(client, auth_headers, family):
+    presets = (await client.get("/family/savings-presets", headers=auth_headers)).json()
+    kinds = [p["kind"] for p in presets]
+    assert kinds.count("flexible") == 1
+    assert kinds.count("locked") >= 3
+    # annual rate is compounded, always above the monthly figure
+    for p in presets:
+        assert Decimal(p["annual_rate"]) > Decimal(p["monthly_rate"])
+
+
+async def test_toggling_a_preset_on_then_off_creates_then_removes_the_plan(client, auth_headers, family):
+    on = await client.post(
+        "/family/savings-presets", headers=auth_headers, json={"key": "locked-6m", "active": True}
+    )
+    assert on.status_code == 204
+    plans = (await client.get("/family/savings-plans", headers=auth_headers)).json()
+    assert [p["preset_key"] for p in plans] == ["locked-6m"]
+    assert plans[0]["is_active"] is True
+
+    off = await client.post(
+        "/family/savings-presets", headers=auth_headers, json={"key": "locked-6m", "active": False}
+    )
+    assert off.status_code == 204
+    assert (await client.get("/family/savings-plans", headers=auth_headers)).json() == []
+
+
+async def test_turning_a_preset_off_keeps_the_plan_if_a_kid_has_money_in_it(
+    client, auth_headers, family, db_session
+):
+    kid = await _kid(db_session, family)
+    await debts_db_service.record_transaction(db_session, kid.id, DebtTransactionType.ADD, Decimal("100"))
+    await db_session.commit()
+    await client.post("/family/savings-presets", headers=auth_headers, json={"key": "flex", "active": True})
+    plan_id = (await client.get("/family/savings-plans", headers=auth_headers)).json()[0]["id"]
+    await client.post(
+        f"/kids/{kid.id}/savings/deposit", headers=auth_headers, json={"plan_id": plan_id, "amount": 30}
+    )
+
+    await client.post("/family/savings-presets", headers=auth_headers, json={"key": "flex", "active": False})
+
+    plans = (await client.get("/family/savings-plans", headers=auth_headers)).json()
+    assert len(plans) == 1 and plans[0]["is_active"] is False
+    # the deposit is still there and still growing
+    overview = await client.get(f"/kids/{kid.id}/savings", headers=auth_headers)
+    assert len(overview.json()["deposits"]) == 1
+    # a switched-off preset isn't offered for new deposits
+    assert overview.json()["plans"] == []
+
+
+async def test_reactivating_a_preset_that_still_has_deposits_reuses_the_same_row(
+    client, auth_headers, family, db_session
+):
+    kid = await _kid(db_session, family)
+    await debts_db_service.record_transaction(db_session, kid.id, DebtTransactionType.ADD, Decimal("100"))
+    await db_session.commit()
+    await client.post("/family/savings-presets", headers=auth_headers, json={"key": "flex", "active": True})
+    first_id = (await client.get("/family/savings-plans", headers=auth_headers)).json()[0]["id"]
+    await client.post(
+        f"/kids/{kid.id}/savings/deposit", headers=auth_headers, json={"plan_id": first_id, "amount": 20}
+    )
+
+    # off keeps the row (deposit present), on flips it back to the same row
+    await client.post("/family/savings-presets", headers=auth_headers, json={"key": "flex", "active": False})
+    await client.post("/family/savings-presets", headers=auth_headers, json={"key": "flex", "active": True})
+
+    plans = (await client.get("/family/savings-plans", headers=auth_headers)).json()
+    assert len(plans) == 1 and plans[0]["id"] == first_id and plans[0]["is_active"] is True
+
+
 async def test_cannot_touch_another_familys_plans_or_deposit_for_their_kid(
     client, auth_headers, family, db_session
 ):
