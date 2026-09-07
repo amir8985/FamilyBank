@@ -1,0 +1,135 @@
+name: Android - Build signed .aab
+
+# Manual only — this isn't part of the normal web deploy pipeline
+# (pushing to master already deploys the website via Vercel/Render).
+# Run this on demand whenever you want a new Play Store build.
+#
+# Bubblewrap's CLI is interactive by default and was never dry-run
+# end-to-end before this workflow's first real use (no local JDK/Android
+# SDK exist in the dev environment this was written in) — both `init`
+# and `build` can prompt with a (Y/n) question the first time they run
+# in a fresh environment. Two real failures hit and fixed so far
+# (2026-09-06):
+#   1. `build` hung forever on "install the Android SDK?" with no input
+#      piped to it (killed after ~2min, exit 130) — fixed by piping
+#      `yes ""` (accept every bracketed default) into it.
+#   2. Answering "yes, install the SDK" led bubblewrap to try
+#      downloading its own copy, which failed with "Terms and
+#      Conditions was not signed" — Android's SDK licenses need an
+#      explicit "y", which a blank/Enter answer doesn't satisfy, and
+#      it kept re-prompting into a wall of blank lines until it gave up.
+#      Fixed by accepting all SDK licenses on the SDK `setup-android`
+#      already installed, then telling bubblewrap to use *that* SDK
+#      (answer "n" to "install the Android SDK?") instead of trying to
+#      fetch and license its own.
+#   3. Answering "n" then leads to a free-text "Path to your existing
+#      Android SDK:" prompt — a blank answer isn't accepted there (it's
+#      not a bracketed-default question like the others). Piping
+#      $ANDROID_HOME as the answer *still* looped "isn't correct" —
+#      either the prompt sequence had an extra step this didn't account
+#      for, or bubblewrap's validation wants something the runner's
+#      preinstalled SDK doesn't have. Rather than keep guessing at the
+#      interactive flow, this now writes Bubblewrap's own config file
+#      (~/.bubblewrap/config.json — the two fields it looks for are
+#      jdkPath/androidSdkPath) *before* ever invoking it, which makes it
+#      skip these prompts entirely instead of asking and validating them
+#      interactively.
+#   4. `init`'s final section generates its own throwaway signing
+#      certificate (unused) via a First/Last/Org/City/... wizard whose
+#      questions reject blank answers. Two attempts at counting exactly
+#      how many earlier blank-accepted questions precede it both failed
+#      (the count wasn't stable/verifiable through a truncated log) —
+#      switched to the same trick as #3: pre-create the keystore file
+#      init looks for by default (./android.keystore, alias "android")
+#      with a direct, fully non-interactive `keytool` call, so init
+#      finds it already exists and never asks at all.
+# The pattern that's worked best across all of these: don't guess at
+# exactly which prompt a piped answer will land on — find what file
+# bubblewrap checks for and pre-create/pre-configure it instead.
+on:
+  workflow_dispatch: {}
+
+env:
+  PWA_URL: https://family-bank-nine.vercel.app
+  PACKAGE_ID: com.familybank.app
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android SDK licenses
+        # Required before downloading any SDK platform/build-tools
+        # package non-interactively — a blank/Enter answer does NOT
+        # count as accepting, each license needs a literal "y".
+        run: yes | sdkmanager --licenses || true
+
+      - name: Install Bubblewrap CLI
+        run: npm install -g @bubblewrap/cli
+
+      - name: Pre-configure Bubblewrap (skip its SDK/JDK prompts)
+        run: |
+          mkdir -p ~/.bubblewrap
+          SDK_PATH="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/.android/sdk}}"
+          cat > ~/.bubblewrap/config.json <<EOF
+          {"jdkPath": "${JAVA_HOME}", "androidSdkPath": "${SDK_PATH}"}
+          EOF
+          cat ~/.bubblewrap/config.json
+
+      - name: Decode signing keystore
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > android-release.keystore
+
+      - name: Pre-create the placeholder key bubblewrap init looks for
+        # Bubblewrap init offers to generate its own signing key
+        # (unused — the real one is supplied explicitly via
+        # --signingKeyPath in the build step below) if it doesn't find
+        # one at its default path/alias, via an interactive
+        # First/Last/Org/City/... wizard whose exact question count
+        # proved too fragile to blindly pipe answers to (confirmed
+        # 2026-09-06, two failed attempts at guessing the sequence).
+        # Pre-creating the file it looks for skips that wizard
+        # entirely instead. Password is throwaway — this key is never
+        # used for anything real.
+        working-directory: android
+        run: |
+          keytool -genkeypair -alias android -keyalg RSA -keysize 2048 -validity 10000 \
+            -keystore android.keystore -storepass throwaway123 -keypass throwaway123 \
+            -dname "CN=FamilyBank, OU=FamilyBank, O=FamilyBank, L=Lisbon, ST=Lisbon, C=PT"
+
+      - name: Scaffold TWA project (first run only — reuses android/ if it already exists)
+        working-directory: android
+        run: |
+          if [ ! -f twa-manifest.json ]; then
+            yes "" | bubblewrap init \
+              --manifest="${{ env.PWA_URL }}/manifest.webmanifest" \
+              --directory=. || true
+          fi
+
+      - name: Build signed app bundle
+        working-directory: android
+        env:
+          BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          BUBBLEWRAP_KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          # The pre-written ~/.bubblewrap/config.json above should mean
+          # the SDK/JDK questions never get asked at all now. yes "" is
+          # kept only as a fallback for any other default-able prompt.
+          yes "" | bubblewrap build \
+            --signingKeyPath=../android-release.keystore \
+            --signingKeyAlias=upload
+
+      - name: Upload signed .aab
+        uses: actions/upload-artifact@v4
+        with:
+          name: familybank-release
+          path: android/app-release-bundle.aab

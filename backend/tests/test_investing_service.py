@@ -79,6 +79,19 @@ async def test_buy_unknown_symbol_rejected(db_session, family):
         await investing_service.buy(db_session, kid, "USD", "NOPE", Decimal("1"))
 
 
+async def test_buy_rejects_cleanly_when_fx_rate_is_missing(db_session, family, seeded_asset):
+    """"ZZZ" isn't a real currency, so it's guaranteed to have no cached
+    rate (see test_portfolio_survives_missing_fx_rate's use of the same
+    trick). Previously this path raised a bare ValueError from
+    fx_service.convert() — a subclass check (`except InvestingError`)
+    doesn't catch its own parent class, so this crashed as an unhandled
+    500 instead of the clean 400 every other rejection here gets."""
+    kid = await _make_kid(db_session, family)
+    await _fund(db_session, kid, "1000")
+    with pytest.raises(investing_service.InvestingError, match="No cached FX rate"):
+        await investing_service.buy(db_session, kid, "ZZZ", "TEST", Decimal("1"))
+
+
 async def test_buying_twice_creates_two_separate_lots(db_session, family, seeded_asset):
     """Every buy() creates its own independent InvestmentLot now — even a
     second purchase of the same symbol never blends into the first one

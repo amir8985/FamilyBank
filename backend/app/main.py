@@ -15,6 +15,7 @@ from app.api import (
     routes_kids,
 )
 from app.core.config import get_settings
+from app.core.request_logging import RequestLoggingMiddleware
 from app.scheduler.loop import run_forever
 
 settings = get_settings()
@@ -35,7 +36,19 @@ async def lifespan(app: FastAPI):
         task.cancel()
 
 
-app = FastAPI(title="FamilyBank API", version="1.2.0", lifespan=lifespan)
+app = FastAPI(
+    title="FamilyBank API",
+    version="1.5.0",
+    lifespan=lifespan,
+    # Swagger/ReDoc/schema map out the whole API surface (including
+    # /internal/* route names) to anyone who visits them — harmless
+    # against a properly-auth'd API, but no reason to hand it out
+    # publicly either. Same dev_mode gate as the other dev-only surface
+    # (routes_internal.dev_reset).
+    docs_url="/docs" if settings.dev_mode else None,
+    redoc_url="/redoc" if settings.dev_mode else None,
+    openapi_url="/openapi.json" if settings.dev_mode else None,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -44,6 +57,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Added after CORSMiddleware so it's the outermost layer (Starlette wraps
+# in reverse order of add_middleware calls) — times the whole request,
+# CORS handling included.
+app.add_middleware(RequestLoggingMiddleware)
 
 app.include_router(routes_auth.router)
 app.include_router(routes_kids.router)

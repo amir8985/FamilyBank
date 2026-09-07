@@ -31,7 +31,309 @@ backend/    FastAPI + SQLAlchemy + Postgres (Neon) — see backend/README.md
 frontend/   Next.js 16 (App Router) + Tailwind v4 — see frontend/README.md
 ```
 
-## Status as of 2026-09-06
+## Status as of 2026-09-07
+
+**Production-slowness root cause found: it's per-query network latency
+to Neon, multiplied by however many queries an endpoint runs
+sequentially — not a missing index or a single bad query.** Started
+from the request_logs data the 2026-09-06 logging feature collects.
+Every query in production — including a trivial single-row
+primary-key lookup with an index (`SELECT ... FROM kids WHERE id = $1`)
+— has a floor of ~300-450ms, and this floor is nearly identical
+regardless of the query's actual complexity (a plain PK lookup and a
+multi-column INSERT cost about the same). That's the signature of
+network round-trip time dominating over query execution, not query
+cost — almost certainly Render's backend instance and the Neon project
+not being in the same region (confirmed by the user; not yet changed —
+see "Architecture review for scale" below, "Not yet done (2026-09-07)").
+Since every endpoint in this codebase issues its
+DB queries sequentially (each one `await`ed before the next starts),
+this floor multiplies directly: `/buy` (9 queries) cost ~2.7s in DB
+time alone, `/home` (4 queries) ~2-3.5s, matching exactly what users
+reported ("every click takes a few seconds").
+
+**Why this couldn't be fixed by parallelizing queries within a
+request, and what was done instead.** The obvious fix — run
+independent queries concurrently via `asyncio.gather` — turns out to
+be unsafe here: SQLAlchemy's `AsyncSession` is documented as not safe
+for concurrent use from multiple coroutines on one instance (one
+connection can only run one statement at a time). True parallelism
+would need each concurrent branch to open its *own* session/connection
+— but `tests/conftest.py`'s test-isolation strategy runs every test
+inside one outer transaction that's never committed
+(`join_transaction_mode="create_savepoint"`, rolled back at teardown —
+see its own docstring), so a second, independently-opened connection
+inside the same request literally cannot see a test's uncommitted
+fixture rows (Postgres transaction isolation). Opening extra
+connections for concurrency would have silently broken every test that
+seeds data and then hits an endpoint using it. Given that, the fix
+actually applied was **reducing the number of round-trips instead of
+parallelizing them**, which doesn't have this problem (still one
+connection, same session, just fewer separate `SELECT`s):
+- `investing_service.get_asset_detail` (backs `GET /catalog/{symbol}`)
+  was doing 3 of its own raw per-symbol queries (`session.get`
+  ×2 + `fx_service.convert`) instead of reusing
+  `load_price_context`'s shared, scheduler-refreshed, in-process cache
+  like every other read path in this module already does — a genuine
+  miss from the batching pass described in the module's own docstring.
+  Fixed to route through the cache like the rest; costs ~0 extra
+  queries on a warm cache instead of always 3.
+- `load_price_context` itself did 2 separate `SELECT *`s (catalog,
+  then price_cache) on a cache miss — now one `LEFT JOIN` (outer, since
+  a symbol can exist in the catalog with no price row yet). This runs
+  on every read endpoint's cold-cache path (TTL expiry or right after a
+  scheduler refresh clears it), so it's on the critical path of nearly
+  everything.
+- Net effect: fewer round-trips per request, but each remaining
+  round-trip still pays the same ~300-450ms floor — **this is a real
+  improvement, not a fix for the underlying cause.** The actual fix is
+  the region mismatch (see "Architecture review for scale" below,
+  "Not yet done (2026-09-07)"); no amount of query reduction inside one
+  request substitutes for that.
+
+**Follow-up, same day: traced two specific screens (Settings, the
+Add/Deduct sheet) query-by-query at the user's request, because "1-5
+queries taking multiple seconds" didn't sound reasonable on its own —
+correctly, it doesn't fully add up, and tracing it exactly surfaced
+both a real remaining bug and a real gap in what the logging can prove.**
+- `GET /family/settings` issues exactly **one** query (`get_family`'s
+  `db.get(Family, id)` — the route body itself does nothing else). Yet
+  production logs showed this same request taking up to 1842ms total
+  while `db_time_ms` was only ~426ms — over 1400ms unaccounted for by
+  the only query that ran. `request_logging.py`'s own comment already
+  named the candidates: "Python processing, external calls, or waiting
+  for a connection to free up." There's no external call and trivial
+  Python here, which points squarely at **connection acquisition** —
+  either waiting for a pooled connection to free up, or paying a brand
+  new physical connection's full TCP+TLS+Postgres-auth handshake (see
+  the `"db: established a new physical connection"` log lines, which
+  fire more often than "once at startup" in the captured window) —
+  and that cost is invisible to `db_time_ms`, which only wraps
+  `before_cursor_execute`→`after_cursor_execute` (i.e., starts timing
+  *after* a connection is already in hand).
+- `POST /kids/{id}/debt` (the Add/Deduct sheet) issues exactly **5**:
+  `get_kid` (tenant-scoped Kid lookup — necessary), `get_family`
+  (needed for `family.base_currency` in the response — Kid has no
+  currency of its own, so this isn't avoidable without denormalizing
+  currency onto Kid, which has its own well-documented trap — see
+  "Lessons learned"), `get_balance` for `balance_before`, the
+  `INSERT` itself, and — this was the actual bug —**a second, fully
+  redundant `get_balance` call for `new_balance`**, re-running the same
+  `SUM(...)` over the kid's whole ledger a second time when the route
+  already knows exactly what it just inserted. Fixed: `new_balance` is
+  now computed as `balance_before ± body.amount` in Python
+  (`routes_debt.py`) instead of re-querying — cuts this endpoint from 5
+  queries to 4, specifically removing one of the two ~1.1s `SUM`
+  aggregates seen in production. Also strictly more correct, not just
+  faster: the old code's second `SUM` could reflect an unrelated write
+  landing between the commit and that query, silently mislabeling the
+  response's "new balance" with a number this request didn't actually
+  produce.
+- **The user then pushed on `get_kid` + `get_family` specifically: two
+  separate point-lookups per request, when the route already knows
+  both ids and both are simple, related rows — asked directly why this
+  couldn't be one query.** It could, and now is:
+  `app/api/deps.get_kid_and_family` (new) replaces the pair with a
+  single `SELECT ... FROM kids JOIN families ...` — one round-trip
+  instead of two, same tenant-isolation check as `get_kid` (still
+  explicit, not just implied by the JOIN condition — a kid_id from
+  another family still 404s;
+  `tests/test_api_family_isolation.py` still passes unchanged).
+  Swapped in everywhere both were used together: `routes_debt.py` (both
+  routes) and `routes_investing.py` (`get_portfolio`, `quote_purchase`,
+  `buy`, `sell`) — **`POST /kids/{id}/debt` is now 3 queries, down from
+  the original 5**; `/buy` and the others each drop one query too.
+  `get_kid`/`get_family` on their own are unchanged and still used
+  where a route only needs one (e.g. `list_investment_transactions`
+  only needs the kid).
+- **Turned the connection-acquisition hypothesis into something the
+  next round of production logs can actually prove, instead of leaving
+  it as a guess.** Added `time_to_first_query_ms` to the structured
+  stdout log line (`app/core/query_timing.py` +
+  `app/core/request_logging.py`, stdout-only like `db_query_count`/
+  `db_time_ms` — not persisted) — the elapsed time from request start
+  to the *first* query's `before_cursor_execute`, which is exactly
+  where a pool checkout or a fresh connection's handshake would show
+  up and nowhere else currently does. On `GET /family/settings`, a
+  large `time_to_first_query_ms` relative to `db_time_ms` (e.g. the
+  1400ms/426ms case above) would confirm the connection-acquisition
+  theory directly; a small one would mean the gap is something else and
+  this theory is wrong. **Next session: once this is live, check that
+  field on a few of the slowest single-query requests before assuming
+  anything further about the cause.**
+- Two remaining necessary-but-real costs, left as-is because they're
+  inherent to the design, not bugs: (1) `get_kid`+`get_family` are two
+  separate point-lookups per request that touch anything kid-scoped —
+  this is the tenant-isolation enforcement point
+  (`app/api/deps.py`, and the property `test_api_family_isolation.py`
+  guards), not something to collapse away; (2) `get_balance` is a full
+  `SUM` over a kid's ledger rather than a stored running total, by
+  deliberate design (CLAUDE.md's "Architecture quick-reference": "never
+  stored redundantly" — buy/sell writes stay consistent with the ledger
+  specifically *because* nothing caches a derived balance). Both are
+  small, single-purpose queries; at this app's data volumes neither
+  should be inherently slow — if `time_to_first_query_ms` rules out
+  connection overhead, `get_balance`'s `SUM` cost specifically (not
+  just its round-trip) would be the next thing worth measuring for real
+  row counts on the actual production kid, not guessed at.
+
+**`request_logs` now has actual retention** (backend v1.5.0) — nothing
+previously deleted from this table; at real traffic it would grow
+forever, costing Neon storage and eventually slowing down the very
+diagnostic queries it exists to enable.
+`app/scheduler/jobs.cleanup_old_request_logs` prunes rows older than
+`settings.request_log_retention_days` (default 30), piggybacked onto
+the existing price/FX refresh cadence (`run_refresh`) rather than
+needing its own schedule — a plain `DELETE` against the already-indexed
+`created_at` column is cheap enough not to warrant one.
+
+**`POST /internal/client-metrics` is now rate-limited per IP**
+(`app/core/rate_limit.py`, 30 req/60s, in-memory) — this was the one
+endpoint with no auth requirement and no shared secret (CLAUDE.md had
+flagged it as a known gap), genuinely reachable by anyone; a flood
+would grow `request_logs` and cost real Neon compute for nothing. Over
+the limit, the endpoint still returns 200 (this is best-effort
+telemetry — the frontend beacon fires-and-forgets and never checks the
+response) but silently drops the entry instead of logging it. Comes
+with the same module-level-cache test-isolation trap the price-context
+cache already had (see "Lessons learned") — httpx's `ASGITransport`
+gives every test request the same fake client address by default, so
+`clear_rate_limit_state()` had to be added to `db_session`'s
+setup/teardown alongside `clear_price_context_cache()`, or one test
+hitting the limit would silently poison every later test's ability to
+call this endpoint. **Requires `render.yaml`'s `startCommand` to pass
+`--proxy-headers`** (added) — without it, `request.client.host` always
+sees Render's own edge proxy, not the real visitor, since Render
+always sits in front; safe to trust here specifically because Render's
+proxy is the only thing that can open a direct connection to this
+process. In-memory and per-process — if this backend ever runs as more
+than one instance, each enforces the cap independently rather than
+sharing one global count; revisit with a shared store (Redis) if that
+ever becomes the deployment shape.
+
+**Frontend: every navigation under `/home/*` now shows instantly, with
+a real loading state or a friendly error screen, instead of freezing
+with no feedback (frontend v0.6.0).** Motivated by a real observation:
+if the backend is slow (see above) or unreachable, a parent tapping
+Settings saw nothing happen at all — no URL change, no spinner, no
+error — until the request either resolved or hung. Root cause: **zero
+`loading.tsx`/`error.tsx` files existed anywhere in the app**, and
+every page was a Server Component doing a blocking `await api.get(...)`
+with `cache: "no-store"`, so a slow/dead backend blocked the entire
+route transition.
+- Added a `loading.tsx` (lightweight skeleton, `components/ui/skeleton.tsx`)
+  to every route segment under `/home` and `/onboarding`, and an
+  `error.tsx` (`components/ui/error-state.tsx` — "Something went
+  wrong" + Try again/Back to home) at `/home`, `/onboarding`, and the
+  root, so a thrown `ApiError` (backend down, 5xx, or an uncaught 404
+  like a since-deleted kid_id) renders a real screen instead of a crash.
+- **The harder part, and the one that actually makes any of the above
+  take effect: `home/layout.tsx` had to be restructured.** It did its
+  own blocking fetch (`/family/settings`, to redirect to `/onboarding`
+  if incomplete) directly in the layout body. Per this exact Next.js
+  version's own docs
+  (`node_modules/next/dist/docs/.../file-conventions/layout.md`,
+  "Interaction with loading.js" — **read this before touching
+  layout/page fetch patterns again; this project's `AGENTS.md` warns
+  this Next.js version's conventions can differ from training data,
+  and this is a concrete example of that**): a layout that does an
+  uncached fetch **blocks navigation for every route beneath it**, and
+  none of that segment's `loading.tsx` files can ever show for it —
+  `loading.tsx` only wraps `page.js` and nested layouts, never the
+  segment's own `layout.js`. Fixed by extracting the fetch+redirect
+  into a small `OnboardingGate` async component, Suspense-wrapped
+  (`fallback={null}`) inside `HomeLayout`, with `{children}` rendered
+  as a sibling outside that boundary — exactly the pattern the docs
+  show for this. **Trade-off accepted deliberately:** a user who lands
+  on a `/home/*` URL before completing onboarding could now see a brief
+  flash of real page content before the redirect fires, instead of
+  never seeing it — not a security issue (the backend still enforces
+  real authorization on every call regardless of what this gate does),
+  just a rare, cosmetic edge case traded for instant navigation on
+  every normal request.
+- Verified for real (not just build+lint): minted a valid NextAuth
+  session cookie directly (via `@auth/core/jwt`'s `encode()`, the same
+  `AUTH_SECRET` from `.env.local`, salt = the cookie name) against the
+  synthetic test family from CLAUDE.md's dev/test-DB section, drove it
+  with Playwright — normal navigation to `/home`/`/home/settings`
+  renders real data with zero console errors, and navigating to a
+  well-formed but nonexistent kid_id (a stand-in for "the backend
+  failed" — same code path, `api.get` throwing an uncaught `ApiError`)
+  correctly rendered the new error screen with a working Try again
+  button instead of a blank/crashed page. Didn't literally kill the
+  local backend process for this — see "Lessons learned" for why.
+
+**A real, pre-existing pytest bug found and fixed while adding the
+`request_logs` cleanup test: `app.core.db.engine`'s connection pool is
+not event-loop-aware, and pytest-asyncio gives every test function its
+own event loop.** `app/core/db.py`'s module-level `SessionLocal`/`engine`
+is a process-wide singleton (by design — it's the real engine used
+outside of tests too). asyncpg connections are tied to the event loop
+that created them; when a test pools a connection via a direct
+`SessionLocal()` call (the pattern `tests/test_scheduler.py` already
+used for `last_refresh_at`), that connection can get checked back out
+to a *later* test's different loop and immediately blow up with
+`RuntimeError: Event loop is closed` on first use — not a bug in
+whichever test happens to draw it. Only `test_scheduler.py` touches
+`SessionLocal` directly among test files, so it was invisible until a
+second test in that file did the same thing (the new
+`test_cleanup_old_request_logs_...` test). Fixed with an autouse
+fixture scoped to that one file that disposes `engine`'s pool before
+and after each test — see its docstring in `tests/test_scheduler.py`
+if you add a test elsewhere that touches `SessionLocal`/`engine`
+directly; the same trap applies there too.
+
+**Architecture review for scale (thousands-tens of thousands of
+users), requested directly — findings, and what's still open:**
+- **Not yet done (2026-09-07) — region mismatch, the real fix for the
+  slowness above:** the user confirmed Render and Neon are not in the
+  same region; not yet changed (needs a dashboard decision — pick a
+  Render region and/or a Neon project region that are actually close,
+  possibly requiring a new service/project — not a code change). No
+  amount of query-count reduction fully substitutes for this.
+- **Single Render instance, single uvicorn process, no `--workers`.**
+  Fine for today's traffic (this app is I/O-bound — one async event
+  loop handles a lot of concurrent waiting-on-Neon requests) but it's a
+  single point of failure with no redundancy, and any CPU-bound stretch
+  (JWT verification, Pydantic validation, JSON serialization) serializes
+  across every concurrent request in that one process. Revisit if/when
+  traffic actually grows enough to matter — not done preemptively here.
+- **The in-process scheduler (`app/scheduler/loop.py`) assumes exactly
+  one long-running instance.** If this backend ever runs as more than
+  one Render instance, each would run its own copy of the refresh loop
+  independently — redundant Yahoo/FX API calls per instance, and no
+  coordination writing the same `price_cache`/`fx_rates_cache` rows
+  (upserts, so not *unsafe*, just wasteful and racy about which
+  instance's data "wins"). Needs a real fix (leader election, or move
+  to the external-cron `/internal/refresh` model the code already
+  supports for serverless) before adding a second instance — don't add
+  one without addressing this first.
+- **Connection ceiling**: this process's pool is unconfigured
+  (`pool_size`/`max_overflow` left at SQLAlchemy's defaults, 5+10=15),
+  plus the request-logging middleware and the scheduler each open their
+  own separate connections via `SessionLocal` outside the request pool.
+  Fine for one instance at today's scale; Neon's free tier has its own
+  connection ceiling that a second instance (or raising `pool_size`)
+  could approach — check Neon's dashboard limits before scaling either
+  dimension.
+- **`request_logs` retention** — done this session (see above).
+- **`/internal/client-metrics` abuse resistance** — done this session
+  (rate limit, see above); still no auth/shared secret by design (a
+  metric from a signed-out screen is still worth logging), so the rate
+  limit is the only defense, not a full fix.
+- **The free tiers themselves (Render + Neon) are not built for
+  "thousands of users" regardless of any code-level fix** — cold
+  starts, shared/throttled CPU, and hard connection/storage ceilings
+  are platform limits, not something this codebase can optimize past.
+  Getting to real scale needs a paid-tier decision from the user
+  (cost), not more code changes — flagged, not resolved here.
+- Did **not** find further N+1 query patterns beyond the two fixed
+  above in this pass (checked `/home`, `/catalog`, `/catalog/{symbol}`,
+  `/kids/{id}/portfolio`, `/kids/{id}/quote`, `/kids/{id}/buy`,
+  `/kids/{id}/debt`) — the remaining per-endpoint query counts are
+  already about as low as they can be within one session/connection.
+
+## Status as of 2026-09-06 — stock boost feature
 
 **Stock "boost" feature — backend built and tested, settings UI built and
 manually verified; kid-facing portfolio UI NOT yet wired up (see gap
@@ -393,15 +695,105 @@ migration in another worktree already having run against the shared DB,
 which a `git`-only check can't see. Run `alembic current` against the
 shared DB, not just `ls versions/`, before trusting a number is free.
 
+## Status as of 2026-09-06 — request logging, currency history, and earlier work
+
 **Built and verified:** the full v1 flow — Google-only sign-in →
 onboarding (currency + first kids) → home (balances, add/deduct) → kid
 portfolio (holdings, since-purchase %, sell) → buy flow (units/amount
 toggle with a live server-computed quote, snapped to a real tradable
 step size) → per-kid history (general + investment-only, now currency-
 and source-aware — see below) → settings (currency, kid management,
-**real currency conversion with a warning dialog**). 65 backend tests
+**real currency conversion with a warning dialog**). 74 backend tests
 pass (`cd backend && pytest`), frontend `npm run build`/`npm run lint`
 are clean.
+
+**Request/performance logging + client-side timing beacon (built
+2026-09-06, backend v1.3.0 / frontend v0.6.0).** Motivated by a real
+report: production feels slow on some clicks, but it's not reproducible
+locally — with zero request-level logging in place beforehand, there was
+no way to tell whether that's Render's free-tier cold start (sleeps
+after 15 min idle, 30-50s to wake), the DB, or something in app code.
+This ships the diagnostic instrumentation, not a fix for the slowness
+itself — see "How to actually find the problem" below for the next step.
+- **`RequestLoggingMiddleware`** (`app/core/request_logging.py`) times
+  every backend request, tags it with `user_id`/`family_id` decoded
+  straight off the session JWT (no dependency on the route's own auth —
+  works even for a request that 401s/404s), and both logs a structured
+  JSON line to stdout (viewable in Render's log tail immediately, no new
+  accounts needed) and writes a row to a new `request_logs` table
+  (migration `0010`) so it's actually queryable/aggregable later — this
+  doubles as the seed data for a future per-family/user activity
+  dashboard (deliberately out of scope for this feature — see TODO.txt),
+  which is why family/user id is captured now even though this feature
+  only uses it for latency, not activity, analysis.
+- **Deliberately a raw ASGI middleware, not `BaseHTTPMiddleware`** — the
+  latter buffers the whole response through an in-memory stream per
+  request, which is itself measurable overhead. Would have been ironic
+  for a performance feature to make requests slower.
+- **`POST /internal/client-metrics`**: the frontend's one shared
+  `request()` function (`frontend/src/lib/api.ts`, used by every API call
+  in the app) times each call — success or failure — and fires a
+  non-blocking beacon here with the real HTTP method, path, duration, and
+  status. This is what tells slow-client-or-network apart from
+  slow-server for the *same* logical action, which server-side logging
+  alone can never do. Auth is optional on this endpoint (a metric from a
+  signed-out screen is still worth logging).
+- **Persistence is fire-and-forget on both write paths**
+  (`spawn_persist_request_log`) — a response must never block on the log
+  INSERT itself, or the feature would add to the very latency it exists
+  to diagnose. Tracked in a module-level set with a done-callback rather
+  than a bare `asyncio.create_task(...)`, per asyncio's own documented
+  warning that an unreferenced Task can be garbage-collected mid-flight.
+- **`path`/`error` columns are `Text`, not a length-capped `String`** —
+  Postgres raises on an oversized `VARCHAR(n)` insert rather than
+  truncating, which is the one thing a *logging* write must never do
+  (an unmatched/malformed raw URL, or an unhandled exception's `repr()`,
+  can't be bounded in advance the way validated user input can).
+- **DB persistence is disabled for the whole pytest suite**
+  (`tests/conftest.py`'s autouse `_no_request_log_persistence`, toggled
+  via `request_logging.set_persist_enabled`) — this middleware writes
+  through its own connection (`SessionLocal`), not the request-scoped
+  session the `client` fixture overrides, so left enabled it would insert
+  a real, never-rolled-back row into the shared dev/test DB on every
+  single request the test suite makes.
+- **Known limitation, not addressed:** `/internal/client-metrics` has no
+  auth requirement, rate limit, or shared secret (unlike `/internal/refresh`'s
+  scheduler-secret header) — it's genuinely reachable by anyone on the
+  internet, and an anonymous flood of POSTs would grow `request_logs` and
+  cost real Neon storage/compute. Left as-is for now given this app's low
+  profile (same risk-tolerance call as the currency-conversion race
+  condition below), but worth knowing if abuse ever shows up in the data.
+- **Real-world multi-worker migration collision, again:** this branch's
+  migration also landed as `0010` while worker-3 (a parallel session, same
+  machine) had independently reached `0010`/`0011` for an unrelated
+  feature, already applied to the shared dev/test DB. Same root cause and
+  resolution pattern as the `0005`-`0008` collision documented below —
+  worker-3 had already reconstructed a placeholder `0010` file (see its
+  own docstring) after discovering `alembic upgrade head` silently no-op'd
+  against a revision id we'd both claimed; coordinated directly via
+  `SendMessage` before pushing, worker-3 will delete their placeholder
+  once this branch's real `0010_request_logs.py` is on `master`.
+
+**How to actually find the production slowness, next** (the point of
+this feature): once this is live, let it collect at least a day of real
+traffic, then query `request_logs` directly — no dashboard needed yet:
+```sql
+SELECT path, source, count(*), avg(duration_ms),
+       percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95
+FROM request_logs
+WHERE created_at > now() - interval '2 days'
+GROUP BY path, source ORDER BY p95 DESC;
+```
+Rule out the cheap explanation first — filter `duration_ms > 5000` and
+check whether those rows cluster right after long gaps for the same
+family (Render's free-tier cold start; no amount of logging fixes that,
+only a paid tier or a keep-warm ping would). Then compare `source='client'`
+vs `source='server'` for the same `path`: a big gap points at
+network/cold-start, a small gap with both slow points at the backend
+itself (likely DB/Neon, per the `pool_recycle` note below). If that
+aggregation doesn't pinpoint it, the natural next step is sub-timing
+(DB time vs. external-API time) inside specific slow endpoints — worth
+doing once you know *which* ones, not before.
 
 **UI polish: currency-symbol font fix, button/color consistency, touch
 targets (built 2026-09-04, frontend-only, v0.5.0).** A parent testing on
@@ -781,6 +1173,64 @@ worktree/checkout.
   `backend/.env`'s `CORS_ORIGINS` allows, or every client-side `fetch`
   silently fails as a CORS preflight rejection that looks nothing like
   an auth problem.
+- **Even *with* `--reload`, don't assume every edited file actually got
+  picked up.** Editing two files in quick succession, WatchFiles logged
+  only one "detected changes in ... Reloading" line and never restarted
+  for the other — the server kept answering with the pre-edit behavior
+  for that file indefinitely. Worse, `taskkill` on the resulting stale
+  PID reported `SUCCESS` while `netstat` kept showing it bound and still
+  serving requests — the same "kill reports success but it's still
+  alive" symptom as the orphaned-server entry above, but this time with
+  `--reload` on the whole time. If a running dev server's behavior
+  doesn't match a change you just made, don't trust reload logs — kill
+  it and start fresh (or move ports, per the entry above, if killing
+  doesn't stick either). This didn't affect anything shipped — the real
+  verification was the pytest suite, which imports the actual module
+  fresh each run and isn't subject to this class of staleness at all.
+- **A fire-and-forget `asyncio.create_task(...)` with no reference held
+  is a documented footgun** — asyncio's own docs warn the Task can be
+  garbage-collected mid-execution if nothing else references it. Keep a
+  module-level `set` of in-flight tasks and drop each one via
+  `task.add_done_callback(the_set.discard)` instead of calling
+  `create_task` bare (see `request_logging.spawn_persist_request_log`).
+- **Postgres raises on an oversized `VARCHAR(n)` insert — it does not
+  silently truncate.** A column meant to hold a server-generated string
+  you don't fully control the length of (an exception's `repr()`, a raw
+  unmatched request path) needs `Text`, not a capped `String`, or a rare
+  edge case turns a logging write into a crash (caught here since it's
+  wrapped in try/except, but the row is silently lost instead of stored).
+  Reserve length-capped columns for fields already validated at a
+  boundary (Pydantic, a fixed enum) where the cap can never be exceeded.
+- **A module-level asyncpg connection pool (`app/core/db.py`'s
+  `engine`/`SessionLocal`) is not event-loop-aware, and pytest-asyncio
+  gives every test function its own event loop by default.** A
+  connection pooled during one test (via a direct `SessionLocal()` call
+  — see `tests/test_scheduler.py`) can get handed back out to a
+  *later* test's different loop and crash with `RuntimeError: Event
+  loop is closed` on its very first use there — not a bug in whichever
+  test happens to draw the stale connection. Only bites a test file
+  once *two or more* of its tests touch `SessionLocal`/`engine`
+  directly (the normal `db_session`/`client` fixtures use their own
+  separate per-test engine and don't have this problem). Fix: an
+  autouse fixture in that file that disposes `engine`'s pool before and
+  after each test (see `tests/test_scheduler.py`'s
+  `_dispose_module_engine_pool`) — forces a fresh, current-loop
+  connection instead of reusing a stale one, regardless of test order.
+- **`AsyncSession` cannot be used concurrently** (SQLAlchemy's own
+  documented constraint — one connection runs one statement at a time),
+  so `asyncio.gather`-ing independent queries within one request isn't
+  a safe way to cut latency here without opening a second
+  session/connection per concurrent branch. That in turn conflicts with
+  this codebase's test-isolation strategy: `tests/conftest.py` runs
+  every test inside one *uncommitted* outer transaction
+  (`join_transaction_mode="create_savepoint"`), so a second,
+  independently-opened connection mid-request literally can't see a
+  test's seeded-but-uncommitted fixture rows (plain Postgres
+  transaction isolation — nothing SQLAlchemy-specific). If you want to
+  genuinely parallelize DB reads within a request, the number of
+  round-trips is the lever that's actually safe to pull (fewer,
+  broader queries — e.g. a `JOIN` instead of two `SELECT`s), not
+  concurrency on the existing session.
 
 ## Architecture quick-reference
 

@@ -75,11 +75,20 @@ async def load_price_context(session: AsyncSession) -> PriceContext:
         if now - cached_at < _PRICE_CONTEXT_TTL_SECONDS:
             return ctx
 
-    catalog_rows = await session.scalars(select(AssetCatalog))
-    catalog = {a.symbol: a for a in catalog_rows}
-
-    price_rows = await session.scalars(select(PriceCache))
-    prices = {p.symbol: p for p in price_rows}
+    # One LEFT JOIN instead of two separate SELECTs — a symbol can exist
+    # in the catalog with no PriceCache row yet (just added, scheduler
+    # hasn't run), hence the outer join rather than an inner one. Each
+    # round-trip to Neon costs ~300-450ms in production (see the
+    # observability-logging investigation), so cutting a query here isn't
+    # just tidiness — on a cold cache (TTL expiry or a scheduler refresh)
+    # this is on the critical path of nearly every read endpoint in the app.
+    catalog: dict[str, AssetCatalog] = {}
+    prices: dict[str, PriceCache] = {}
+    rows = await session.execute(select(AssetCatalog, PriceCache).outerjoin(PriceCache, PriceCache.symbol == AssetCatalog.symbol))
+    for asset, price in rows:
+        catalog[asset.symbol] = asset
+        if price is not None:
+            prices[asset.symbol] = price
 
     rates = await fx_service.load_all_rates(session)
 
@@ -103,13 +112,6 @@ def _catalog_sort_key(asset: AssetCatalog) -> tuple[int, str]:
     # lead with the simpler, diversified options), alphabetical within
     # each group.
     return (0 if asset.kind == AssetKind.BASKET else 1, asset.display_name)
-
-
-async def _get_price(session: AsyncSession, symbol: str) -> PriceCache:
-    price = await session.get(PriceCache, symbol)
-    if price is None:
-        raise InvestingError(f"No cached price for {symbol} yet")
-    return price
 
 
 def unit_step_for_price(price_per_unit: Decimal) -> Decimal:
@@ -155,9 +157,18 @@ async def quote_purchase(
     amount: Decimal | None,
     units: Decimal | None,
 ) -> dict:
-    price = await _get_price(session, symbol)
-    price_in_family = await fx_service.convert(session, price.price, price.currency, family_currency)
-    if price_in_family <= 0:
+    # Reuses the same in-process price/FX cache the read-only screens use
+    # (load_price_context) instead of live per-call queries — both already
+    # reflect the same last-scheduler-refresh snapshot, so this loses no
+    # accuracy while cutting several sequential DB round-trips per call
+    # (each one measured at ~400ms+ in production — see the
+    # observability-logging investigation this followed from).
+    ctx = await load_price_context(session)
+    price = ctx.prices.get(symbol)
+    if price is None:
+        raise InvestingError(f"No cached price for {symbol} yet")
+    price_in_family = fx_service.convert_from_table(ctx.rates, price.price, price.currency, family_currency)
+    if price_in_family is None or price_in_family <= 0:
         raise InvestingError("Invalid price")
 
     # Snap to the asset's real tradable granularity (see unit_step_for_price)
@@ -196,12 +207,16 @@ async def buy(
     stays only so kids' pre-existing holdings from before this feature
     remain sellable via sell()'s legacy path."""
     async with transaction(session):
-        catalog_entry = await session.get(AssetCatalog, symbol)
-        if catalog_entry is None:
+        ctx = await load_price_context(session)
+        if symbol not in ctx.catalog:
             raise InvestingError(f"Unknown symbol {symbol}")
 
-        price = await _get_price(session, symbol)
-        cost_family = await fx_service.convert(session, price.price * units, price.currency, family_currency)
+        price = ctx.prices.get(symbol)
+        if price is None:
+            raise InvestingError(f"No cached price for {symbol} yet")
+        cost_family = fx_service.convert_from_table(ctx.rates, price.price * units, price.currency, family_currency)
+        if cost_family is None:
+            raise InvestingError(f"No cached FX rate for {price.currency}->{family_currency}")
 
         cash = await debts_db_service.get_balance(session, kid.id)
         if cost_family > cash:
@@ -270,8 +285,13 @@ async def sell(
         if holding is None or holding.units < units:
             raise InvestingError("Cannot sell more units than are held")
 
-        price = await _get_price(session, symbol)
-        proceeds_family = await fx_service.convert(session, price.price * units, price.currency, family_currency)
+        ctx = await load_price_context(session)
+        price = ctx.prices.get(symbol)
+        if price is None:
+            raise InvestingError(f"No cached price for {symbol} yet")
+        proceeds_family = fx_service.convert_from_table(ctx.rates, price.price * units, price.currency, family_currency)
+        if proceeds_family is None:
+            raise InvestingError(f"No cached FX rate for {price.currency}->{family_currency}")
 
         await debts_db_service.record_transaction(
             session,
@@ -606,19 +626,23 @@ def list_catalog(ctx: PriceContext, family_currency: str) -> list[dict]:
 
 
 async def get_asset_detail(session: AsyncSession, symbol: str, family_currency: str) -> dict | None:
-    asset = await session.get(AssetCatalog, symbol)
+    # Was 3 raw per-symbol queries (asset, price, FX rate) — the one read
+    # path in this module that got missed when list_catalog/get_portfolio/
+    # get_family_home were batched onto load_price_context (see module
+    # docstring). Same global, scheduler-refreshed cache every other read
+    # path already uses; nothing here is per-family, so there's no reason
+    # this endpoint should pay its own network round-trips for it.
+    ctx = await load_price_context(session)
+    asset = ctx.catalog.get(symbol)
     if asset is None:
         return None
-    price = await session.get(PriceCache, symbol)
+    price = ctx.prices.get(symbol)
     price_family = None
     day_change_pct = None
     history: list[dict] = []
     price_updated_at = None
     if price is not None:
-        try:
-            price_family = await fx_service.convert(session, price.price, price.currency, family_currency)
-        except ValueError:
-            price_family = None
+        price_family = fx_service.convert_from_table(ctx.rates, price.price, price.currency, family_currency)
         day_change_pct = _day_change(price)
         history = price.history_json or []
         price_updated_at = price.updated_at
