@@ -16,6 +16,10 @@ export type FamilyHome = {
   total_owed: string;
   total_invested: string;
   kids: KidSummary[];
+  // When the scheduler last refreshed the prices behind portfolio values
+  // (~5x/day). ISO string. Lets the client treat this payload as good
+  // until the next refresh instead of re-fetching on every navigation.
+  prices_as_of: string | null;
 };
 
 export type FamilySettings = {
@@ -94,6 +98,7 @@ export type PortfolioOut = {
   total_day_change_amount: string;
   total_day_change_pct: string | null;
   holdings: HoldingOut[];
+  prices_as_of: string | null;
 };
 
 export type BuySellQuoteResponse = {

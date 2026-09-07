@@ -8,6 +8,8 @@ import { Sparkline } from "@/components/ui/sparkline";
 import { PageHeader } from "@/components/ui/page-header";
 import { SellSheet } from "@/components/sell-sheet";
 import { Money } from "@/components/ui/money";
+import { useFamily } from "@/lib/family-store";
+import { invalidateResource } from "@/lib/use-cached-resource";
 import { api, ApiError } from "@/lib/api";
 import { currencySymbol, defaultUnitStep, formatMoney, formatPct, formatUpdatedAt, trimUnits } from "@/lib/format";
 import type { AssetDetailOut, BuySellQuoteResponse, HoldingOut, InvestmentTransactionOut } from "@/lib/types";
@@ -38,6 +40,7 @@ export function BuyFormClient({
 }) {
   const { data: session } = useSession();
   const router = useRouter();
+  const { refreshHome } = useFamily();
 
   // A "nice" starting quantity so the first thing a kid sees costs
   // something sensible — between 1 and 10 in the family's currency —
@@ -100,8 +103,13 @@ export function BuyFormClient({
         symbol: asset.symbol,
         units: quote.units,
       });
+      // Drop the now-stale cached portfolio so the destination screen
+      // refetches, and reconcile the home store's cash/portfolio totals.
+      invalidateResource(`portfolio:${kidId}`);
+      invalidateResource(`debt:${kidId}`);
+      invalidateResource(`investment-transactions:${kidId}`);
+      refreshHome();
       router.push(`/home/kids/${kidId}`);
-      router.refresh();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Something went wrong");
     } finally {

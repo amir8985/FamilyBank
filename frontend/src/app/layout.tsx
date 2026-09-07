@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Source_Serif_4, Work_Sans } from "next/font/google";
 import { SessionProvider } from "next-auth/react";
 import { RegisterServiceWorker } from "@/components/register-sw";
+import { ToastProvider } from "@/components/ui/toast";
 import "./globals.css";
 
 const sourceSerif = Source_Serif_4({
@@ -35,7 +36,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${sourceSerif.variable} ${workSans.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-cream-canvas">
-        <SessionProvider>{children}</SessionProvider>
+        <SessionProvider>
+          <ToastProvider>{children}</ToastProvider>
+        </SessionProvider>
         <RegisterServiceWorker />
       </body>
     </html>

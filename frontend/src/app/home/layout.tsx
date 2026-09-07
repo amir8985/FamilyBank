@@ -2,27 +2,36 @@ import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { api } from "@/lib/api";
-import type { FamilySettings } from "@/lib/types";
+import { FamilyProvider } from "@/lib/family-store";
+import type { FamilyHome, FamilySettings } from "@/lib/types";
 
-// Next.js: a layout that reads cookies()/does an uncached fetch blocks
-// navigation for *every* route beneath it — none of the loading.tsx
-// files under /home would ever show, because loading.tsx can't cover a
-// segment's own layout, only the page.js (and nested layouts) below it.
-// See node_modules/next/dist/docs/.../file-conventions/layout.md,
-// "Interaction with loading.js". Wrapping the redirect-gate's own fetch
-// in its own Suspense boundary (fallback=null — it renders nothing on
-// the happy path) unblocks that: `children` streams in immediately
-// under its own per-route loading.tsx, while this gate resolves
-// independently and still redirects the moment it knows onboarding
-// isn't done.
+// Next.js: a layout that does an uncached *fetch* blocks navigation for
+// every route beneath it, and none of that segment's loading.tsx files
+// can show for it (loading.tsx only wraps page.js + nested layouts, never
+// the segment's own layout.js — see
+// node_modules/next/dist/docs/.../file-conventions/layout.md,
+// "Interaction with loading.js"; AGENTS.md warns this Next version's
+// conventions differ from training data, and this is a concrete example).
 //
-// Trade-off, accepted deliberately: this means a user who somehow lands
-// on a /home/* URL before completing onboarding could see a flash of
-// that page's real content for a moment before the redirect fires,
-// instead of never seeing it. Not a security issue (the backend still
-// enforces real authorization on every API call regardless of what this
-// gate does) — just a very rare, purely cosmetic edge case, traded for
-// instant navigation on every normal request.
+// So the two things this layout needs are handled separately:
+//
+//  1. Auth guard — `requireSession()` only reads/verifies the session
+//     cookie (no network), so awaiting it here is a sub-millisecond
+//     block, and it's the single place that now guards the whole segment
+//     since the pages below are Client Components that can't call it
+//     themselves.
+//
+//  2. The `/home` seed + the onboarding-completed check — both real
+//     backend calls, so both stay inside their own Suspense boundaries.
+//     `OnboardingGate` renders nothing on the happy path; `FamilyProvider`
+//     shows a skeleton until the seed resolves (once per session — every
+//     navigation after that reads the client store instantly).
+//
+// Trade-off, unchanged from before: a user who lands on a /home/* URL
+// before finishing onboarding may see a flash of real content before the
+// redirect fires. Not a security issue — the backend enforces real
+// authorization on every call regardless.
+
 async function OnboardingGate() {
   const session = await requireSession();
   const settings = await api.get<FamilySettings>("/family/settings", session.backendToken);
@@ -30,13 +39,18 @@ async function OnboardingGate() {
   return null;
 }
 
-export default function HomeLayout({ children }: LayoutProps<"/home">) {
+export default async function HomeLayout({ children }: LayoutProps<"/home">) {
+  const session = await requireSession();
+  // Started here, NOT awaited — streams to FamilyProvider, which reads it
+  // with React's `use()` inside its own Suspense boundary.
+  const homePromise = api.get<FamilyHome>("/home", session.backendToken);
+
   return (
     <div className="min-h-screen bg-cream">
       <Suspense fallback={null}>
         <OnboardingGate />
       </Suspense>
-      {children}
+      <FamilyProvider homePromise={homePromise}>{children}</FamilyProvider>
     </div>
   );
 }

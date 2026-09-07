@@ -5,8 +5,28 @@ import Link from "next/link";
 import { TickerBadge } from "@/components/ui/ticker-badge";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Money } from "@/components/ui/money";
+import { Skeleton } from "@/components/ui/skeleton";
 import { formatMoney, formatPct, trimUnits } from "@/lib/format";
 import type { AssetOut, PortfolioOut } from "@/lib/types";
+
+function RowSkeletons() {
+  return (
+    <>
+      {[0, 1, 2].map((i) => (
+        <div
+          key={i}
+          className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex items-center justify-between"
+        >
+          <div className="flex items-center gap-3">
+            <Skeleton className="w-9 h-9 rounded-full" />
+            <Skeleton className="h-4 w-28" />
+          </div>
+          <Skeleton className="h-4 w-16" />
+        </div>
+      ))}
+    </>
+  );
+}
 
 export function PortfolioClient({
   kidId,
@@ -14,12 +34,16 @@ export function PortfolioClient({
   catalog,
   currency,
   initialTab,
+  holdingsLoading = false,
+  catalogLoading = false,
 }: {
   kidId: string;
   portfolio: PortfolioOut;
   catalog: AssetOut[];
   currency: string;
   initialTab: "holdings" | "buy";
+  holdingsLoading?: boolean;
+  catalogLoading?: boolean;
 }) {
   const [tab, setTab] = useState<"holdings" | "buy">(initialTab);
 
@@ -110,12 +134,16 @@ export function PortfolioClient({
               );
             })}
 
-            {portfolio.holdings.length === 0 && (
+            {portfolio.holdings.length === 0 && holdingsLoading && <RowSkeletons />}
+
+            {portfolio.holdings.length === 0 && !holdingsLoading && (
               <p className="text-center text-[13px] text-muted pt-4">
                 No investments yet — switch to Buy to get started.
               </p>
             )}
           </>
+        ) : catalog.length === 0 && catalogLoading ? (
+          <RowSkeletons />
         ) : (
           <>
             <CatalogSection

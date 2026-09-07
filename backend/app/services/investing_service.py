@@ -12,6 +12,7 @@ per asset/holding — that N+1 pattern was making /home and /catalog take
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import select
@@ -35,6 +36,15 @@ class PriceContext:
     catalog: dict[str, AssetCatalog]
     prices: dict[str, PriceCache]
     rates: RateTable
+
+    @property
+    def prices_as_of(self) -> datetime | None:
+        """When the scheduler last refreshed prices — every row a refresh
+        touches gets the same timestamp (see scheduler/jobs._write_prices),
+        so the newest `updated_at` is "when a refresh last completed."
+        Surfaced on read responses so the frontend can cache price-derived
+        data with confidence: it only goes stale every ~5h (spec 4.3)."""
+        return max((p.updated_at for p in self.prices.values()), default=None)
 
 
 # In-process cache — the catalog/price/FX data is global (not per-family)
@@ -359,6 +369,7 @@ def compute_portfolio(
         "total_day_change_amount": total_day_change,
         "total_day_change_pct": total_day_change_pct,
         "holdings": holdings_out,
+        "prices_as_of": ctx.prices_as_of,
     }
 
 

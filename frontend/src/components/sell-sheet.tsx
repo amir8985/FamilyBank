@@ -2,9 +2,11 @@
 
 import { useState } from "react";
 import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Money } from "@/components/ui/money";
+import { useFamily } from "@/lib/family-store";
+import { invalidateResource } from "@/lib/use-cached-resource";
+import { useToast } from "@/components/ui/toast";
 import { api, ApiError } from "@/lib/api";
 import { defaultUnitStep, formatMoney, trimUnits } from "@/lib/format";
 import type { HoldingOut, InvestmentTransactionOut } from "@/lib/types";
@@ -30,7 +32,8 @@ export function SellSheet({
   currency: string;
 }) {
   const { data: session } = useSession();
-  const router = useRouter();
+  const { applyKidBalanceDelta, refreshHome } = useFamily();
+  const toast = useToast();
 
   const totalUnits = Number(holding.units);
   const pricePerUnit = totalUnits > 0 ? Number(holding.current_value) / totalUnits : 0;
@@ -39,7 +42,6 @@ export function SellSheet({
 
   const [unitsStr, setUnitsStr] = useState(() => trimUnits(holding.units));
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const units = Math.min(Number(unitsStr) || 0, totalUnits);
   const proceeds = units * pricePerUnit;
@@ -51,22 +53,39 @@ export function SellSheet({
     setUnitsStr(next.toFixed(stepDecimals));
   }
 
-  async function handleConfirm() {
-    if (!session?.backendToken || !valid) return;
+  function handleConfirm() {
+    if (!session?.backendToken || !valid || submitting) return;
     setSubmitting(true);
-    setError(null);
-    try {
-      await api.post<InvestmentTransactionOut>(`/kids/${kidId}/sell`, session.backendToken, {
+
+    const token = session.backendToken;
+    const soldUnits = units;
+
+    // Reflect the proceeds in the kid's cash immediately (an estimate at
+    // the last-seen price; the background reconcile corrects it), drop
+    // the stale portfolio cache, and close.
+    const rollback = applyKidBalanceDelta(kidId, proceeds);
+    onClose();
+
+    api
+      .post<InvestmentTransactionOut>(`/kids/${kidId}/sell`, token, {
         symbol: holding.symbol,
-        units,
+        units: soldUnits,
+      })
+      .then(() => {
+        invalidateResource(`portfolio:${kidId}`);
+        invalidateResource(`debt:${kidId}`);
+        invalidateResource(`investment-transactions:${kidId}`);
+        return refreshHome();
+      })
+      .catch((e) => {
+        rollback();
+        toast(
+          e instanceof ApiError && e.status < 500
+            ? e.message
+            : `Couldn't sell ${holding.display_name} — nothing was sold.`,
+          "error"
+        );
       });
-      onClose();
-      router.refresh();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Something went wrong");
-    } finally {
-      setSubmitting(false);
-    }
   }
 
   return (
@@ -127,15 +146,13 @@ export function SellSheet({
         <span className="font-bold text-emerald">{formatMoney(cashAvailable + proceeds, currency)}</span>
       </div>
 
-      {error && <p className="text-[13px] text-negative -mt-2">{error}</p>}
-
       <button
         type="button"
         disabled={submitting || !valid}
         onClick={handleConfirm}
         className="bg-emerald text-white text-center min-h-11 py-[15px] rounded-xl text-[15px] font-semibold disabled:opacity-50 cursor-pointer"
       >
-        {submitting ? "Selling…" : `Sell for ${formatMoney(proceeds, currency)}`}
+        {`Sell for ${formatMoney(proceeds, currency)}`}
       </button>
     </BottomSheet>
   );

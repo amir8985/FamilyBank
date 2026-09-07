@@ -2,9 +2,11 @@
 
 import { useState } from "react";
 import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { SegmentedControl } from "@/components/ui/segmented-control";
+import { useFamily } from "@/lib/family-store";
+import { invalidateResource } from "@/lib/use-cached-resource";
+import { useToast } from "@/components/ui/toast";
 import { api, ApiError } from "@/lib/api";
 import { currencySymbol, formatMoney } from "@/lib/format";
 import type { DebtTransactionType, DebtUpdateResult } from "@/lib/types";
@@ -27,34 +29,49 @@ export function DebtSheet({
   initialDirection: DebtTransactionType;
 }) {
   const { data: session } = useSession();
-  const router = useRouter();
+  const { applyKidBalanceDelta, refreshHome } = useFamily();
+  const toast = useToast();
   const [direction, setDirection] = useState<DebtTransactionType>(initialDirection);
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const parsedAmount = Number(amount) || 0;
   const newBalance =
     direction === "add" ? currentBalance + parsedAmount : currentBalance - parsedAmount;
 
-  async function handleConfirm() {
-    if (!session?.backendToken || parsedAmount <= 0) return;
+  function handleConfirm() {
+    if (!session?.backendToken || parsedAmount <= 0 || submitting) return;
     setSubmitting(true);
-    setError(null);
-    try {
-      await api.post<DebtUpdateResult>(`/kids/${kidId}/debt`, session.backendToken, {
+
+    const token = session.backendToken;
+    const delta = direction === "add" ? parsedAmount : -parsedAmount;
+    const trimmedNote = note.trim() || null;
+
+    // Apply immediately and close — the parent already has everything it
+    // needs to show the result. Persistence and reconciliation happen in
+    // the background; a failure rolls the balance back and explains why.
+    const rollback = applyKidBalanceDelta(kidId, delta);
+    onClose();
+
+    api
+      .post<DebtUpdateResult>(`/kids/${kidId}/debt`, token, {
         type: direction,
         amount: parsedAmount,
-        note: note.trim() || null,
+        note: trimmedNote,
+      })
+      .then(() => {
+        invalidateResource(`debt:${kidId}`);
+        return refreshHome();
+      })
+      .catch((e) => {
+        rollback();
+        const msg =
+          e instanceof ApiError && e.status < 500
+            ? e.message
+            : `Couldn't update ${kidName}'s balance — it's been restored.`;
+        toast(msg, "error");
       });
-      onClose();
-      router.refresh();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Something went wrong");
-    } finally {
-      setSubmitting(false);
-    }
   }
 
   return (
@@ -103,15 +120,13 @@ export function DebtSheet({
         <span className="font-bold text-emerald">{formatMoney(newBalance, currency)}</span>
       </div>
 
-      {error && <p className="text-[13px] text-negative -mt-2">{error}</p>}
-
       <button
         type="button"
         disabled={submitting || parsedAmount <= 0}
         onClick={handleConfirm}
         className="bg-emerald text-white text-center min-h-11 py-[15px] rounded-xl text-[15px] font-semibold disabled:opacity-50 cursor-pointer"
       >
-        {submitting ? "Confirming…" : "Confirm"}
+        Confirm
       </button>
     </BottomSheet>
   );

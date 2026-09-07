@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
+import { useFamily } from "@/lib/family-store";
+import { useToast } from "@/components/ui/toast";
 import { api, ApiError } from "@/lib/api";
 import { formatMoney } from "@/lib/format";
 import type { CurrencyChangePreviewOut } from "@/lib/types";
@@ -23,11 +24,11 @@ export function CurrencyChangeSheet({
   onClose: () => void;
 }) {
   const { data: session } = useSession();
-  const router = useRouter();
+  const { applyCurrencyOptimistic, refreshHome } = useFamily();
+  const toast = useToast();
   const [preview, setPreview] = useState<CurrencyChangePreviewOut | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
-  const [confirmError, setConfirmError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!session?.backendToken) return;
@@ -48,18 +49,31 @@ export function CurrencyChangeSheet({
     };
   }, [session?.backendToken, toCurrency]);
 
-  async function handleConfirm() {
-    if (!session?.backendToken) return;
+  function handleConfirm() {
+    if (!session?.backendToken || !preview || confirming) return;
     setConfirming(true);
-    setConfirmError(null);
-    try {
-      await api.patch("/family/settings", session.backendToken, { base_currency: toCurrency });
-      onClose();
-      router.refresh();
-    } catch (e) {
-      setConfirmError(e instanceof ApiError ? e.message : "Something went wrong");
-      setConfirming(false);
-    }
+
+    const token = session.backendToken;
+    const convertedByKid: Record<string, number> = {};
+    for (const k of preview.kids) convertedByKid[k.kid_id] = Number(k.new_cash_balance);
+
+    // The preview already shows the parent the exact converted numbers, so
+    // apply them and close. The PATCH reconciles in the background.
+    const rollback = applyCurrencyOptimistic(toCurrency, convertedByKid);
+    onClose();
+
+    api
+      .patch("/family/settings", token, { base_currency: toCurrency })
+      .then(() => refreshHome())
+      .catch((e) => {
+        rollback();
+        toast(
+          e instanceof ApiError && e.status < 500
+            ? e.message
+            : `Couldn't change currency to ${toCurrency} — reverted.`,
+          "error"
+        );
+      });
   }
 
   return (
@@ -103,15 +117,13 @@ export function CurrencyChangeSheet({
         </div>
       )}
 
-      {confirmError && <p className="text-[13px] text-negative">{confirmError}</p>}
-
       <button
         type="button"
         disabled={!preview || confirming}
         onClick={handleConfirm}
         className="bg-emerald text-white text-center py-[15px] rounded-xl text-[15px] font-semibold disabled:opacity-50 cursor-pointer"
       >
-        {confirming ? "Changing currency…" : `Yes, convert everything to ${toCurrency}`}
+        {`Yes, convert everything to ${toCurrency}`}
       </button>
       <button
         type="button"
