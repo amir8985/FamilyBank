@@ -32,7 +32,8 @@ export default function KidInvestmentHistoryPage({
     { ttlMs: 15_000 }
   );
 
-  if (error && !transactions && !kid) throw error;
+  // Fetch failed with nothing cached — route to the segment error boundary.
+  if (error && !transactions) throw error;
 
   return (
     <div className="max-w-md mx-auto min-h-screen flex flex-col">
@@ -61,6 +62,8 @@ export default function KidInvestmentHistoryPage({
         )}
 
         {transactions?.map((t) => {
+          // Native currency — investment_transactions store the price
+          // exactly as it was at the time, unconverted (architecture §1).
           const total = (Number(t.price) * Number(t.units)).toFixed(2);
           return (
             <div

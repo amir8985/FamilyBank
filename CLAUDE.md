@@ -31,6 +31,59 @@ backend/    FastAPI + SQLAlchemy + Postgres (Neon) — see backend/README.md
 frontend/   Next.js 16 (App Router) + Tailwind v4 — see frontend/README.md
 ```
 
+## Current state / handoff (2026-09-07, end of `finish-feature` on `worker-1`)
+
+**What this branch does:** removes the "every click freezes the UI" problem
+without waiting on the pending Render/Neon region move. Navigation between
+cached screens is now instant (a client-side `/home` store seeded once per
+session), and writes (add/deduct money, add/remove kid, currency change,
+sell, sell-all, buy) reflect immediately with background persistence +
+rollback-on-failure. Full rationale + file map in the "Instant UX" status
+section below; merge-with-stock-boost notes in the section just under this.
+
+**Key decisions:**
+- Hand-rolled client store + `useCachedResource` (no SWR/React-Query) —
+  the project keeps its runtime deps to next/react/next-auth.
+- The `/home` seed is a server-started promise read with `use()` inside
+  `FamilyProvider`'s own Suspense — NOT an `await` in the layout body
+  (that's the navigation-blocking trap; see Lessons learned).
+- Sell keeps its "Selling…" button (matches master's buy flow and its own
+  `SellControls` refactor) rather than the standalone optimistic-sell an
+  earlier draft had — sell is a deliberate action like buy.
+- `finish-feature` review pass fixed the real bugs it surfaced: cached
+  screens now refetch after `invalidateResource`/`clearResourceCache`
+  (they used to sit on a stuck skeleton after a write); `applyKidBalanceDelta`
+  moves `total_owed` too (the home total was left stale); currency change
+  now clears the resource cache (cached amounts were in the old currency);
+  a stale cached error no longer re-throws on remount before the retry
+  runs; `invalidateKid()` helper replaces the repeated 3-4 line invalidate
+  blocks.
+
+**Verified:** 101 backend tests pass; frontend `build` + `lint` + `tsc`
+clean; `npm run test:e2e` (5) pass; Playwright authed smoke against the
+synthetic test family confirms Home→Settings makes zero backend requests,
+optimistic deduct moves both the kid card and the family total, a forced
+500 rolls back + toasts, sell-all no longer strands a skeleton, buy /
+boost-settings / lot-detail / history screens all render with no console
+errors.
+
+**Versions:** frontend `0.8.0` (was 0.7.0 — minor: new client-data
+layer). Backend `prices_as_of` field is additive-only, no migration.
+
+**Next session / gotchas:**
+- Local dev: backend `.env` `CORS_ORIGINS` was widened to include
+  `http://localhost:3000` so the frontend can run there (the port Google
+  OAuth is registered for). Harmless; revert if you like.
+- `useCachedResource` re-renders every mounted hook on any cache write
+  (tiny pub/sub) — fine at this app's scale (≤3 hooks mounted), revisit
+  if a screen ever mounts many.
+- The 3 boost screens master added (`settings/investing`,
+  `settings/investing/boost`, `lots/[lotId]`) were converted to the same
+  client + `useCachedResource("family-settings")` pattern for consistent
+  instant nav.
+- Not yet done: push, merge to `master`, cut the next branch (gated on
+  user confirmation per project permissions).
+
 ## Status as of 2026-09-07 — worker-1: instant-UX branch merged with master's stock-boost feature
 
 **`worker-1` now carries BOTH the instant-UX / client-store work (its own

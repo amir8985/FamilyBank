@@ -5,7 +5,7 @@ import { useSession } from "next-auth/react";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { useFamily } from "@/lib/family-store";
-import { invalidateResource } from "@/lib/use-cached-resource";
+import { invalidateKid } from "@/lib/use-cached-resource";
 import { useToast } from "@/components/ui/toast";
 import { api, ApiError } from "@/lib/api";
 import { currencySymbol, formatMoney } from "@/lib/format";
@@ -61,7 +61,7 @@ export function DebtSheet({
         note: trimmedNote,
       })
       .then(() => {
-        invalidateResource(`debt:${kidId}`);
+        invalidateKid(kidId);
         return refreshHome();
       })
       .catch((e) => {

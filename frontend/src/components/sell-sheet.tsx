@@ -3,7 +3,7 @@
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { SellControls } from "@/components/sell-controls";
 import { useFamily } from "@/lib/family-store";
-import { invalidateResource } from "@/lib/use-cached-resource";
+import { invalidateKid } from "@/lib/use-cached-resource";
 import { formatMoney, trimUnits } from "@/lib/format";
 import type { HoldingOut } from "@/lib/types";
 
@@ -42,9 +42,7 @@ export function SellSheet({
           onClose();
           // Client store reconcile instead of router.refresh() — the
           // screens that read this data are client-rendered from cache now.
-          invalidateResource(`portfolio:${kidId}`);
-          invalidateResource(`debt:${kidId}`);
-          invalidateResource(`investment-transactions:${kidId}`);
+          invalidateKid(kidId);
           refreshHome();
         }}
       />

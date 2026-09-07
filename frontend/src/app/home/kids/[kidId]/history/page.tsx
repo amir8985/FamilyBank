@@ -27,7 +27,9 @@ export default function KidHistoryPage({
     { ttlMs: 15_000 }
   );
 
-  if (error && !transactions && !kid) throw error;
+  // Fetch failed with nothing cached — route to the segment error
+  // boundary rather than spinning forever.
+  if (error && !transactions) throw error;
 
   return (
     <div className="max-w-md mx-auto min-h-screen flex flex-col">
@@ -78,6 +80,8 @@ export default function KidHistoryPage({
                 <div className="text-[11px] text-muted mt-0.5">{formatDateTime(t.created_at)}</div>
               </div>
               {t.is_adjustment ? (
+                // Not a real add/deduct — the balance was just recalculated
+                // in the new currency — so no +/- sign and no green/red.
                 <div className="font-semibold text-[15px] text-muted">{formatMoney(t.amount, t.currency)}</div>
               ) : (
                 <div className={`font-semibold text-[15px] ${t.type === "add" ? "text-positive" : "text-negative"}`}>

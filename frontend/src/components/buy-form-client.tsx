@@ -10,7 +10,7 @@ import { SellSheet } from "@/components/sell-sheet";
 import { BoostedBadge, BoostedExplanation } from "@/components/ui/boosted-badge";
 import { Money } from "@/components/ui/money";
 import { useFamily } from "@/lib/family-store";
-import { invalidateResource } from "@/lib/use-cached-resource";
+import { invalidateKid } from "@/lib/use-cached-resource";
 import { api, ApiError } from "@/lib/api";
 import { currencySymbol, defaultUnitStep, formatMoney, formatPct, formatUpdatedAt, trimUnits } from "@/lib/format";
 import type { AssetDetailOut, BuySellQuoteResponse, HoldingOut, InvestmentTransactionOut } from "@/lib/types";
@@ -119,11 +119,9 @@ export function BuyFormClient({
         symbol: asset.symbol,
         units: quote.units,
       });
-      // Drop the now-stale cached portfolio so the destination screen
+      // Drop the now-stale cached views so the destination screen
       // refetches, and reconcile the home store's cash/portfolio totals.
-      invalidateResource(`portfolio:${kidId}`);
-      invalidateResource(`debt:${kidId}`);
-      invalidateResource(`investment-transactions:${kidId}`);
+      invalidateKid(kidId);
       refreshHome();
       router.push(`/home/kids/${kidId}`);
     } catch (e) {

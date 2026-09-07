@@ -8,7 +8,7 @@ import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Money } from "@/components/ui/money";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useFamily } from "@/lib/family-store";
-import { invalidateResource } from "@/lib/use-cached-resource";
+import { invalidateKid } from "@/lib/use-cached-resource";
 import { api, ApiError } from "@/lib/api";
 import { formatMoney, formatPct, trimUnits } from "@/lib/format";
 import type { AssetOut, PortfolioOut } from "@/lib/types";
@@ -65,9 +65,7 @@ export function PortfolioClient({
     setSellAllError(null);
     try {
       await api.post(`/kids/${kidId}/sell-all`, session.backendToken);
-      invalidateResource(`portfolio:${kidId}`);
-      invalidateResource(`debt:${kidId}`);
-      invalidateResource(`investment-transactions:${kidId}`);
+      invalidateKid(kidId);
       refreshHome();
     } catch (e) {
       setSellAllError(e instanceof ApiError ? e.message : "Something went wrong");

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useFamily } from "@/lib/family-store";
-import { invalidateResource } from "@/lib/use-cached-resource";
+import { invalidateKid } from "@/lib/use-cached-resource";
 import { PageHeader } from "@/components/ui/page-header";
 import { Money } from "@/components/ui/money";
 import { LotChart } from "@/components/ui/lot-chart";
@@ -121,10 +121,7 @@ export function LotDetailClient({
             // visit to this page; return to My Investments rather than
             // leaving the parent stranded on a (now stale) lot page.
             onSold={() => {
-              invalidateResource(`lot:${kidId}:`);
-              invalidateResource(`portfolio:${kidId}`);
-              invalidateResource(`debt:${kidId}`);
-              invalidateResource(`investment-transactions:${kidId}`);
+              invalidateKid(kidId);
               refreshHome();
               router.push(`/home/kids/${kidId}`);
             }}

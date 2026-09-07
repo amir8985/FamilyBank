@@ -33,12 +33,10 @@ type FamilyStore = {
   /** Refetch `/home` and replace the store with server truth. Deduped —
    * concurrent calls share one request. */
   refreshHome: () => Promise<void>;
-  /** Replace the store outright (e.g. from a response that already
-   * returns the fresh home shape). */
-  replaceHome: (home: FamilyHome) => void;
   /** Optimistically add `delta` (signed, in the family's currency) to a
-   * kid's cash balance. Returns a rollback that applies the inverse, so
-   * it composes safely with other in-flight optimistic writes. */
+   * kid's cash balance and the family total. Returns a rollback that
+   * applies the inverse, so it composes safely with other in-flight
+   * optimistic writes. */
   applyKidBalanceDelta: (kidId: string, delta: number) => () => void;
   /** Optimistically append a kid. Returns the temp id (so the caller can
    * swap it once the real row arrives) and an inverse rollback. */
@@ -145,20 +143,15 @@ function FamilyStoreRoot({
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [refreshHome]);
 
-  const replaceHome = useCallback((next: FamilyHome) => setHome(next), []);
-
   const applyKidBalanceDelta = useCallback((kidId: string, delta: number) => {
     const shift = (d: number) =>
-      setHome((h) =>
-        withKids(
-          h,
-          h.kids.map((k) =>
-            k.id === kidId
-              ? { ...k, cash_balance: String(num(k.cash_balance) + d) }
-              : k
-          )
-        )
-      );
+      setHome((h) => ({
+        ...h,
+        total_owed: String(num(h.total_owed) + d),
+        kids: h.kids.map((k) =>
+          k.id === kidId ? { ...k, cash_balance: String(num(k.cash_balance) + d) } : k
+        ),
+      }));
     shift(delta);
     return () => shift(-delta);
   }, []);
@@ -205,15 +198,22 @@ function FamilyStoreRoot({
   const applyCurrencyOptimistic = useCallback(
     (currency: string, convertedBalancesByKidId: Record<string, number>) => {
       const snapshot = home;
-      setHome((h) => ({
-        ...h,
-        base_currency: currency,
-        kids: h.kids.map((k) =>
+      setHome((h) => {
+        const kids = h.kids.map((k) =>
           k.id in convertedBalancesByKidId
             ? { ...k, cash_balance: String(convertedBalancesByKidId[k.id]) }
             : k
-        ),
-      }));
+        );
+        return {
+          ...h,
+          base_currency: currency,
+          kids,
+          // total_owed converts exactly (sum of the new balances);
+          // total_invested needs an FX rate we don't have here — the
+          // background refreshHome() corrects it a beat later.
+          total_owed: String(kids.reduce((sum, k) => sum + num(k.cash_balance), 0)),
+        };
+      });
       return () => setHome(snapshot);
     },
     [home]
@@ -223,7 +223,6 @@ function FamilyStoreRoot({
     () => ({
       home,
       refreshHome,
-      replaceHome,
       applyKidBalanceDelta,
       addKidOptimistic,
       removeKidOptimistic,
@@ -232,7 +231,6 @@ function FamilyStoreRoot({
     [
       home,
       refreshHome,
-      replaceHome,
       applyKidBalanceDelta,
       addKidOptimistic,
       removeKidOptimistic,

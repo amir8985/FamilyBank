@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { useFamily } from "@/lib/family-store";
+import { clearResourceCache } from "@/lib/use-cached-resource";
 import { useToast } from "@/components/ui/toast";
 import { api, ApiError } from "@/lib/api";
 import { formatMoney } from "@/lib/format";
@@ -60,6 +61,9 @@ export function CurrencyChangeSheet({
     // The preview already shows the parent the exact converted numbers, so
     // apply them and close. The PATCH reconciles in the background.
     const rollback = applyCurrencyOptimistic(toCurrency, convertedByKid);
+    // Every cached per-kid/catalog view holds amounts in the old
+    // currency — drop them all so they refetch converted.
+    clearResourceCache();
     onClose();
 
     api

@@ -36,7 +36,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         {toasts.map((t) => (
           <div
             key={t.id}
-            role="status"
+            role={t.tone === "error" ? "alert" : "status"}
             className={`max-w-md w-full rounded-xl px-4 py-3 text-[13.5px] font-medium shadow-[0_6px_20px_rgba(0,0,0,.18)] ${
               t.tone === "error" ? "bg-negative text-white" : "bg-emerald-dark text-cream"
             }`}
