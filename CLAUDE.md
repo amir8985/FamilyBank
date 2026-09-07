@@ -31,6 +31,95 @@ backend/    FastAPI + SQLAlchemy + Postgres (Neon) — see backend/README.md
 frontend/   Next.js 16 (App Router) + Tailwind v4 — see frontend/README.md
 ```
 
+## Status as of 2026-09-07 — stock boost feature merged to worktree's branch (backend v1.6.0 / frontend v0.7.0)
+
+**The stock-boost feature (full detail in the "stock boost feature" status
+entry below — this is the finish-feature/merge wrap-up, not a re-description)
+is done, merged with `origin/master`, reviewed, and ready to merge to
+`master`.** Built entirely in `FamilyBank-worker-3` on branch
+`boosted-stocks-and-interest`; `master` had meanwhile diverged substantially
+(production-latency investigation, request-log retention, rate limiting,
+frontend loading/error boundaries, an Android TWA wrapper — none of it
+touching the boost feature's own files directly, but several of them
+touched the *same* functions this feature also rewrote).
+
+- **Merging in `origin/master` required real conflict resolution, not just
+  accepting a side.** Three files had literal conflict markers:
+  - `CLAUDE.md` — both branches had appended their own dated "Status as
+    of" section on top of the same shared history; resolved by keeping
+    both, newest first, and disambiguating the two identically-dated
+    "2026-09-06" headings (one for this feature, one for the pre-existing
+    request-logging/currency-history work) since master's own new content
+    made a bare date no longer unique.
+  - `backend/app/scheduler/jobs.py` — master had split the old
+    `_refresh_prices()` into `_fetch_prices()`/`_write_prices()` (a perf
+    fix, to avoid holding a DB connection open during the ~10s of external
+    HTTP calls) and added `RequestLog` cleanup; this branch's `PriceTick`
+    insert (needed for boost_service to have tick history to walk) had to
+    move into master's new `_write_prices()`, right after its `PriceCache`
+    upsert, rather than living in the now-deleted monolithic function.
+  - `backend/tests/test_investing_service.py` — two separate real
+    conflicts, not just noise: (1) master's
+    `test_buying_twice_averages_cost_and_sums_units` had a name and
+    docstring describing the *old* avg-cost blending behavior, but its
+    actual body already asserted the *new* per-lot behavior (two distinct
+    lots, two distinct lot_ids) — kept this branch's correctly-named
+    `test_buying_twice_creates_two_separate_lots` instead (same body,
+    honest name) alongside master's genuinely new, unrelated
+    `test_buy_rejects_cleanly_when_fx_rate_is_missing`. (2) master's
+    `test_since_purchase_pct_reflects_total_return_not_last_tick_change`
+    mutated `PriceCache` directly and cleared the price-context cache,
+    which was correct for the *old* avg-cost `since_purchase_pct` (still
+    computed from live `PriceCache`) but wrong for a lot, whose
+    `since_purchase_pct` this feature computes from `boost_service`
+    walking `price_ticks` instead (see `investing_service._lot_entry`) —
+    kept this branch's `_add_tick`-based version, the only one that
+    actually exercises the code path a lot-based holding uses.
+  - **`backend/app/services/investing_service.py` and
+    `backend/app/api/routes_investing.py` auto-merged with no conflict
+    markers, but the result was still broken** — worth internalizing:
+    a clean textual 3-way merge is not proof of a semantically correct
+    one when both branches rewrote the same functions for different
+    reasons (this branch: per-lot buy/sell; master: routing every price
+    read through `load_price_context()`/`ctx.prices.get()` instead of
+    live per-call queries, and replacing separate `get_kid`+`get_family`
+    dependencies with a combined `get_kid_and_family`). Running the test
+    suite immediately after the merge commit caught it: `routes_investing.sell_all`
+    still used the pre-merge `Depends(get_family)` pattern, but master's
+    side of the merge had dropped `get_family` from this file's imports
+    entirely (replaced by the combined dependency) — `NameError: name
+    'get_family' is not defined` at import time, which means the whole
+    app would have failed to even start. Fixed by switching `sell_all` to
+    the same `KidAndFamily`/`get_kid_and_family` pattern every other route
+    in this file already uses. **Lesson: after resolving a merge with any
+    auto-merged (marker-free) file that both branches touched
+    substantively, run the test suite before trusting the merge — don't
+    assume "no conflict markers" means "no conflict."**
+- **Verified after the merge, not just assumed clean:** all 101 backend
+  tests pass (`cd backend && pytest`, up from the 65 mentioned in an older
+  status entry below — most of the growth is this feature's own
+  `test_boost_service.py`/`test_boost_settings.py` plus expanded
+  `test_investing_service.py` coverage), `alembic upgrade head` applies
+  cleanly against the shared dev/test DB (already at `0011`, migration
+  chain `0009→0010→0011` intact now that the real `0010_request_logs.py`
+  replaced this branch's placeholder), and `npm run build`/`npm run lint`
+  are both clean.
+- Reviewed every backend file in the diff line-by-line plus the bulk of
+  the frontend components as part of this same pass (both the "senior dev
+  review" and "self code review" steps of this project's finish-feature
+  workflow, done together rather than as two separate passes) — found
+  exactly the one real bug above (the dangling `get_family` reference);
+  nothing else worth flagging turned up (no dead code, no debug leftovers,
+  no unused imports — grepped for all three across the full feature diff).
+- Backend bumped 1.5.0 → 1.6.0, frontend 0.6.0 → 0.7.0 (both minor: a real
+  new user-facing feature, not a patch-sized fix).
+- **Not yet done as of this entry**: push the branch, merge to `master`,
+  cut the next branch — gated on explicit user confirmation per this
+  project's permissions (destructive/shipping steps are never taken
+  autonomously here). If you're reading this and those still haven't
+  happened, that confirmation is the next thing blocking this feature
+  from reaching production.
+
 ## Status as of 2026-09-07
 
 **Production-slowness root cause found: it's per-query network latency

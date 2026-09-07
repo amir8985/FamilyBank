@@ -92,10 +92,10 @@ async def sell(
 
 @router.post("/sell-all", response_model=list[InvestmentTransactionOut])
 async def sell_all(
-    kid: Kid = Depends(get_kid),
-    family: Family = Depends(get_family),
+    kid_family: KidAndFamily = Depends(get_kid_and_family),
     db: AsyncSession = Depends(get_db),
 ) -> list[InvestmentTransactionOut]:
+    kid, family = kid_family.kid, kid_family.family
     txns = await investing_service.sell_all(db, kid, family.base_currency)
     await db.commit()  # see buy() above for why this is needed, not redundant
     return [InvestmentTransactionOut.model_validate(t, from_attributes=True) for t in txns]
