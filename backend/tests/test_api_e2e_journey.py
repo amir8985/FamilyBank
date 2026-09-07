@@ -37,7 +37,11 @@ async def test_full_parent_journey(client, monkeypatch):
         "/family/onboarding", headers=headers, json={"base_currency": "ILS", "kid_names": ["Maya"]}
     )
     assert onboarding.status_code == 200
-    assert onboarding.json() == {"base_currency": "ILS", "onboarding_completed": True}
+    assert onboarding.json() == {
+        "base_currency": "ILS",
+        "onboarding_completed": True,
+        "boost_buffer_rate": None,
+    }
 
     # 4. Home shows the onboarded kid with a zero balance
     home = await client.get("/home", headers=headers)
@@ -100,10 +104,14 @@ async def test_buy_and_sell_journey(client, monkeypatch, seeded_asset):
 
     portfolio = await client.get(f"/kids/{kid_id}/portfolio", headers=headers)
     assert portfolio.json()["cash_available"] == "300.00"
-    assert portfolio.json()["holdings"][0]["units"] == "2.00000000"
+    lot = portfolio.json()["holdings"][0]
+    assert lot["units"] == "2.00000000"
+    assert lot["lot_id"] is not None  # buy() now always creates an InvestmentLot, not an avg-cost holding
 
-    # Sell half
-    sell = await client.post(f"/kids/{kid_id}/sell", headers=headers, json={"symbol": "TEST", "units": 1})
+    # Sell half of the lot
+    sell = await client.post(
+        f"/kids/{kid_id}/sell", headers=headers, json={"lot_id": lot["lot_id"], "units": 1}
+    )
     assert sell.status_code == 201
 
     portfolio2 = await client.get(f"/kids/{kid_id}/portfolio", headers=headers)

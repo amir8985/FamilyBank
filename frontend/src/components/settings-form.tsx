@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { signOut, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Avatar } from "@/components/ui/avatar";
 import { AddKidSheet } from "@/components/add-kid-sheet";
 import { CurrencyChangeSheet } from "@/components/currency-change-sheet";
@@ -99,6 +100,16 @@ export function SettingsForm({
           + Add a kid
         </button>
       </div>
+
+      <Link
+        href="/home/settings/investing"
+        className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex items-center justify-between"
+      >
+        <span className="font-semibold text-[14.5px] text-emerald-dark">
+          Advanced investing &amp; savings settings
+        </span>
+        <span className="text-emerald text-lg">›</span>
+      </Link>
 
       {addKidOpen && <AddKidSheet onClose={() => setAddKidOpen(false)} />}
 

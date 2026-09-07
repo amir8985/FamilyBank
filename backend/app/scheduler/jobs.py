@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.currencies import SUPPORTED_CURRENCIES
 from app.core.db import SessionLocal
-from app.models.catalog import AssetCatalog, PriceCache
+from app.models.catalog import AssetCatalog, PriceCache, PriceTick
 from app.services import fx_service
 from app.services.investing_service import clear_price_context_cache
 from app.services.price_client import PriceFetchError, fetch_quote
@@ -55,6 +55,18 @@ async def _refresh_prices(session: AsyncSession, client: httpx.AsyncClient) -> s
             )
         )
         await session.execute(stmt)
+
+        # Append-only, unlike the upsert above — boost_service needs every
+        # past tick to reconstruct a boosted lot's trajectory, not just
+        # the current price (see models/catalog.py's PriceTick docstring).
+        session.add(
+            PriceTick(
+                symbol=symbol,
+                observed_at=now,
+                price=Decimal(str(data["price"])),
+                currency=data["currency"],
+            )
+        )
 
     return native_currencies
 

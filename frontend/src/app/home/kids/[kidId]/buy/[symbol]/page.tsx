@@ -34,7 +34,23 @@ export default async function BuyPage({
   // the back chevron returns them there instead of always resetting to
   // the default tab.
   const backTab = from === "buy" ? "buy" : "holdings";
-  const existingHolding = portfolio.holdings.find((h) => h.symbol === symbol) ?? null;
+
+  // A symbol can now match more than one holding — buy() never merges
+  // separate purchases into one (see CLAUDE.md's boosted-stocks status
+  // entry). Used only for an informational "you already own N units"
+  // line here — this screen never offers a sell action for any of them
+  // (a lot has its own dedicated page reached from My Investments; a
+  // legacy avg-cost holding is the one exception below).
+  const matchingHoldings = portfolio.holdings.filter((h) => h.symbol === symbol);
+
+  // The one remaining case this screen still sells directly: a
+  // pre-lot legacy avg-cost holding (no lot_id, so it has no dedicated
+  // detail page of its own) reached by tapping it in My Investments —
+  // portfolio-client.tsx only sends that arrival here for a legacy
+  // holding; every lot-based one goes straight to /lots/[lotId] and
+  // never reaches this screen via "holdings" at all.
+  const sellableHolding =
+    from === "holdings" ? (matchingHoldings.find((h) => !h.lot_id) ?? null) : null;
 
   return (
     <BuyFormClient
@@ -45,7 +61,9 @@ export default async function BuyPage({
       currency={settings.base_currency}
       cashAvailable={Number(portfolio.cash_available)}
       backHref={`/home/kids/${kidId}?tab=${backTab}`}
-      existingHolding={existingHolding}
+      matchingHoldings={matchingHoldings}
+      sellableHolding={sellableHolding}
+      boostBufferRate={settings.boost_buffer_rate}
     />
   );
 }

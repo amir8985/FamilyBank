@@ -7,6 +7,7 @@ import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Sparkline } from "@/components/ui/sparkline";
 import { PageHeader } from "@/components/ui/page-header";
 import { SellSheet } from "@/components/sell-sheet";
+import { BoostedBadge, BoostedExplanation } from "@/components/ui/boosted-badge";
 import { Money } from "@/components/ui/money";
 import { api, ApiError } from "@/lib/api";
 import { currencySymbol, defaultUnitStep, formatMoney, formatPct, formatUpdatedAt, trimUnits } from "@/lib/format";
@@ -26,7 +27,9 @@ export function BuyFormClient({
   currency,
   cashAvailable,
   backHref,
-  existingHolding,
+  matchingHoldings,
+  sellableHolding,
+  boostBufferRate,
 }: {
   kidId: string;
   kidName: string;
@@ -34,10 +37,23 @@ export function BuyFormClient({
   currency: string;
   cashAvailable: number;
   backHref: string;
-  existingHolding: HoldingOut | null;
+  // Every existing purchase of this symbol — can be more than one, since
+  // buy() never merges separate purchases (see CLAUDE.md). Used only for
+  // the "you already own N units total" summary below.
+  matchingHoldings: HoldingOut[];
+  // The single specific holding this screen can offer an inline Sell
+  // for — set when exactly one holding matches, or when the kid arrived
+  // via a specific lot's link from My Investments. Null when there's
+  // more than one and no specific one was picked (ambiguous which to
+  // sell from here).
+  sellableHolding: HoldingOut | null;
+  // The family's current boost rate — if set, buying here now will
+  // create a boosted lot at this rate (see investing_service.buy()).
+  boostBufferRate: string | null;
 }) {
   const { data: session } = useSession();
   const router = useRouter();
+  const [badgeOpen, setBadgeOpen] = useState(false);
 
   // A "nice" starting quantity so the first thing a kid sees costs
   // something sensible — between 1 and 10 in the family's currency —
@@ -109,8 +125,10 @@ export function BuyFormClient({
     }
   }
 
-  const sincePurchasePct = existingHolding ? formatPct(existingHolding.since_purchase_pct) : null;
-  const sincePurchasePositive = Number(existingHolding?.since_purchase_pct ?? 0) >= 0;
+  const sincePurchasePct = sellableHolding ? formatPct(sellableHolding.since_purchase_pct) : null;
+  const sincePurchasePositive = Number(sellableHolding?.since_purchase_pct ?? 0) >= 0;
+  const totalUnitsHeld = matchingHoldings.reduce((sum, h) => sum + Number(h.units), 0);
+  const totalValueHeld = matchingHoldings.reduce((sum, h) => sum + Number(h.current_value), 0);
 
   return (
     <div className="max-w-md mx-auto flex flex-col min-h-screen">
@@ -119,7 +137,12 @@ export function BuyFormClient({
       <div className="px-5 pt-3.5">
         <div className="flex items-baseline justify-between">
           <div>
-            <div className="font-semibold text-[15px] text-emerald-dark">{asset.display_name}</div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="font-semibold text-[15px] text-emerald-dark">{asset.display_name}</span>
+              {boostBufferRate && (
+                <BoostedBadge rate={boostBufferRate} onToggle={() => setBadgeOpen((v) => !v)} />
+              )}
+            </div>
             <div className="text-[12.5px] text-muted">
               {formatUpdatedAt(asset.price_updated_at)}
               {asset.native_currency && ` · priced in ${currencySymbol(asset.native_currency)}`}
@@ -132,17 +155,28 @@ export function BuyFormClient({
           )}
         </div>
 
+        {badgeOpen && boostBufferRate && (
+          <div className="mt-2.5">
+            <BoostedExplanation rate={boostBufferRate} />
+          </div>
+        )}
+
         {asset.description && (
           <p className="text-[13px] leading-relaxed text-muted-strong mt-2.5">{asset.description}</p>
         )}
 
         {asset.native_currency && <Sparkline history={asset.history} nativeCurrency={asset.native_currency} />}
 
-        {existingHolding && (
-          <div className="mt-3.5 bg-tint-icon rounded-[10px] px-3.5 py-3 flex items-center justify-between">
+        {sellableHolding ? (
+          // The one case this screen still sells directly — a legacy
+          // avg-cost holding with no dedicated page of its own (see
+          // buy/[symbol]/page.tsx). Every lot-based holding is
+          // informational-only here, below — selling always happens on
+          // its own /lots/[lotId] page instead, never while browsing to buy.
+          <div className="mt-3.5 bg-tint-icon rounded-[10px] px-3.5 py-3 flex items-center justify-between gap-2">
             <div className="text-[13px] font-medium text-muted-strong">
-              You own {trimUnits(existingHolding.units)} units, worth{" "}
-              {formatMoney(existingHolding.current_value, currency)}
+              You own {trimUnits(sellableHolding.units)} units, worth{" "}
+              {formatMoney(sellableHolding.current_value, currency)}
               {sincePurchasePct && (
                 <span className={sincePurchasePositive ? "text-positive" : "text-negative"}>
                   {" "}
@@ -153,11 +187,19 @@ export function BuyFormClient({
             <button
               type="button"
               onClick={() => setSellOpen(true)}
-              className="text-[12.5px] font-semibold text-negative cursor-pointer shrink-0 ml-2"
+              className="text-[12.5px] font-semibold text-negative cursor-pointer shrink-0"
             >
               Sell
             </button>
           </div>
+        ) : (
+          matchingHoldings.length > 0 && (
+            <div className="mt-3.5 bg-tint-icon rounded-[10px] px-3.5 py-3 text-[13px] font-medium text-muted-strong">
+              You already own {trimUnits(totalUnitsHeld)} units
+              {matchingHoldings.length > 1 ? ` across ${matchingHoldings.length} separate purchases` : ""},
+              worth {formatMoney(totalValueHeld, currency)}.
+            </div>
+          )
         )}
       </div>
 
@@ -260,11 +302,11 @@ export function BuyFormClient({
         </button>
       </div>
 
-      {sellOpen && existingHolding && (
+      {sellOpen && sellableHolding && (
         <SellSheet
           onClose={() => setSellOpen(false)}
           kidId={kidId}
-          holding={existingHolding}
+          holding={sellableHolding}
           cashAvailable={cashAvailable}
           currency={currency}
         />

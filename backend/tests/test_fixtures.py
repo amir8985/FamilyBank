@@ -13,7 +13,7 @@ async def test_family_fixture_creates_and_rolls_back(db_session: AsyncSession, f
 async def test_client_hits_real_app(client, auth_headers):
     resp = await client.get("/family/settings", headers=auth_headers)
     assert resp.status_code == 200
-    assert resp.json() == {"base_currency": "USD", "onboarding_completed": True}
+    assert resp.json() == {"base_currency": "USD", "onboarding_completed": True, "boost_buffer_rate": None}
 
 
 async def test_rollback_actually_isolates(db_session: AsyncSession):

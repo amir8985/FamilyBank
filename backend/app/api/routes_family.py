@@ -11,7 +11,7 @@ from app.core.currencies import SUPPORTED_CURRENCIES
 from app.core.db import get_db, transaction
 from app.models.family import Family
 from app.models.kid import AVATAR_PALETTE, Kid
-from app.services import debts_db_service, fx_service
+from app.services import debts_db_service, fx_service, investing_service
 
 router = APIRouter(prefix="/family", tags=["family"])
 
@@ -28,10 +28,16 @@ _RATE_UNAVAILABLE_DETAIL = (
 class FamilySettingsOut(BaseModel):
     base_currency: str
     onboarding_completed: bool
+    boost_buffer_rate: Decimal | None = None
 
 
 class FamilySettingsUpdate(BaseModel):
     base_currency: str = Field(min_length=3, max_length=3)
+
+
+class BoostBufferRateUpdate(BaseModel):
+    # Percent per month, e.g. 3.0 for 3%. None turns boost off entirely.
+    rate: Decimal | None = Field(default=None, ge=0, le=100)
 
 
 class OnboardingRequest(BaseModel):
@@ -61,11 +67,17 @@ def _validated_currency(code: str) -> str:
     return code
 
 
+def _settings_out(family: Family) -> FamilySettingsOut:
+    return FamilySettingsOut(
+        base_currency=family.base_currency,
+        onboarding_completed=family.onboarding_completed,
+        boost_buffer_rate=family.boost_buffer_rate,
+    )
+
+
 @router.get("/settings", response_model=FamilySettingsOut)
 async def get_settings_route(family: Family = Depends(get_family)) -> FamilySettingsOut:
-    return FamilySettingsOut(
-        base_currency=family.base_currency, onboarding_completed=family.onboarding_completed
-    )
+    return _settings_out(family)
 
 
 @router.get("/settings/currency-preview", response_model=CurrencyChangePreviewOut)
@@ -126,9 +138,59 @@ async def update_settings(
             family.base_currency = new_currency
 
     await db.commit()
-    return FamilySettingsOut(
-        base_currency=family.base_currency, onboarding_completed=family.onboarding_completed
-    )
+    return _settings_out(family)
+
+
+@router.patch("/settings/boost-buffer-rate", response_model=FamilySettingsOut)
+async def update_boost_buffer_rate(
+    body: BoostBufferRateUpdate,
+    family: Family = Depends(get_family),
+    db: AsyncSession = Depends(get_db),
+) -> FamilySettingsOut:
+    """Setting or changing the boost is only allowed while every kid in
+    the family holds zero stock — legacy avg-cost holdings or open lots
+    alike (investing_service.has_open_positions). This is what guarantees
+    every open lot at any given moment shares the exact same rate (see
+    Family.boost_buffer_rate's docstring) — there's deliberately no
+    mid-holding rate change to reason about. A parent hitting this 409
+    can instead call sell_and_rebuy below, which does the sell-then-
+    rebuy dance automatically."""
+    if body.rate == family.boost_buffer_rate:
+        return _settings_out(family)
+
+    kids = (await db.scalars(select(Kid).where(Kid.family_id == family.id))).all()
+    if await investing_service.has_open_positions(db, [kid.id for kid in kids]):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Every kid must sell all their stock before the boost can be changed.",
+        )
+
+    family.boost_buffer_rate = body.rate
+    await db.commit()
+    return _settings_out(family)
+
+
+@router.post("/settings/boost-buffer-rate/sell-and-rebuy", response_model=FamilySettingsOut)
+async def sell_and_rebuy_at_new_boost_rate(
+    body: BoostBufferRateUpdate,
+    family: Family = Depends(get_family),
+    db: AsyncSession = Depends(get_db),
+) -> FamilySettingsOut:
+    """The escape hatch for update_boost_buffer_rate's 409 above: sells
+    every kid's entire portfolio, applies the new rate, then rebuys each
+    kid the exact same symbols and unit counts they had — see
+    investing_service.apply_boost_rate_change_with_rebuy for why this is
+    the only way to actually change an already-open lot's rate."""
+    if body.rate == family.boost_buffer_rate:
+        return _settings_out(family)
+
+    try:
+        await investing_service.apply_boost_rate_change_with_rebuy(db, family, body.rate)
+    except investing_service.InvestingError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    await db.commit()
+    return _settings_out(family)
 
 
 @router.post("/onboarding", response_model=FamilySettingsOut)

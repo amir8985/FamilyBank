@@ -43,6 +43,12 @@ class HoldingOut(BaseModel):
     # day_change_pct in the holdings list, since "how has MY investment
     # done" matters more there than today's wiggle.
     since_purchase_pct: Decimal | None
+    # Present only for a post-boost-feature purchase (an InvestmentLot);
+    # None for a pre-existing avg-cost holding. The frontend uses this to
+    # know whether /lots/{lot_id} exists for a "since purchase" graph and
+    # which sell endpoint shape to call.
+    lot_id: uuid.UUID | None = None
+    is_boosted: bool = False
 
 
 class PortfolioOut(BaseModel):
@@ -86,8 +92,41 @@ class BuyRequest(BaseModel):
 
 
 class SellRequest(BaseModel):
-    symbol: str
+    """units + either lot_id (new per-purchase lot, partial sells
+    allowed) or symbol (legacy avg-cost holding path) — see
+    investing_service.sell()."""
+
+    symbol: str | None = None
     units: Decimal = Field(gt=0)
+    lot_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def lot_or_symbol(self) -> "SellRequest":
+        if self.lot_id is None and self.symbol is None:
+            raise ValueError("Provide either lot_id or symbol")
+        return self
+
+
+class LotPointOut(BaseModel):
+    observed_at: datetime
+    value: Decimal
+
+
+class LotDetailOut(BaseModel):
+    lot_id: uuid.UUID
+    symbol: str
+    display_name: str
+    description: str
+    units: Decimal
+    purchase_price: Decimal
+    purchase_currency: str
+    purchased_at: datetime
+    buffer_rate: Decimal | None
+    is_open: bool
+    sold_at: datetime | None
+    current_value: Decimal
+    since_purchase_pct: Decimal | None
+    series: list[LotPointOut]
 
 
 class InvestmentTransactionOut(BaseModel):
