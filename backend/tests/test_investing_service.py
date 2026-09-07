@@ -3,12 +3,15 @@ value_callable mismatch, the func.case() typo, and the transaction/
 autobegin commit bug (see buy/sell below — if that regresses, holdings
 silently stop persisting even though the API response looks fine)."""
 
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import select
 
-from app.models.catalog import AssetKind
+from app.models.catalog import AssetKind, PriceTick
 from app.models.debt_transaction import DebtTransactionType
+from app.models.investment import InvestmentLot
 from app.models.kid import Kid
 from app.services import debts_db_service, investing_service
 
@@ -22,6 +25,16 @@ async def _make_kid(db_session, family, name="Kid") -> Kid:
 
 async def _fund(db_session, kid, amount: str):
     await debts_db_service.record_transaction(db_session, kid.id, DebtTransactionType.ADD, Decimal(amount))
+
+
+async def _only_lot_id(db_session, kid):
+    lot = await db_session.scalar(select(InvestmentLot).where(InvestmentLot.kid_id == kid.id))
+    return lot.id
+
+
+async def _add_tick(db_session, symbol: str, price: str, when: datetime):
+    db_session.add(PriceTick(symbol=symbol, observed_at=when, price=Decimal(price), currency="USD"))
+    await db_session.flush()
 
 
 async def test_buy_persists_holding_and_debits_cash(db_session, family, seeded_asset):
@@ -79,38 +92,78 @@ async def test_buy_rejects_cleanly_when_fx_rate_is_missing(db_session, family, s
         await investing_service.buy(db_session, kid, "ZZZ", "TEST", Decimal("1"))
 
 
-async def test_buying_twice_averages_cost_and_sums_units(db_session, family, seeded_asset):
+async def test_buying_twice_creates_two_separate_lots(db_session, family, seeded_asset):
+    """Every buy() creates its own independent InvestmentLot now — even a
+    second purchase of the same symbol never blends into the first one
+    (see models/investment.py's InvestmentLot docstring)."""
     kid = await _make_kid(db_session, family)
     await _fund(db_session, kid, "1000")
     await investing_service.buy(db_session, kid, "USD", "TEST", Decimal("1"))  # at $100
     await investing_service.buy(db_session, kid, "USD", "TEST", Decimal("1"))  # at $100 again
 
     portfolio = await investing_service.get_portfolio(db_session, kid, "USD")
-    assert len(portfolio["holdings"]) == 1
-    assert portfolio["holdings"][0]["units"] == Decimal("2")
+    assert len(portfolio["holdings"]) == 2
+    assert all(h["units"] == Decimal("1") for h in portfolio["holdings"])
+    assert all(h["lot_id"] is not None for h in portfolio["holdings"])
+    assert len({h["lot_id"] for h in portfolio["holdings"]}) == 2
 
 
-async def test_sell_credits_cash_and_reduces_units(db_session, family, seeded_asset):
+async def test_sell_lot_partial_credits_cash_and_reduces_units(db_session, family, seeded_asset):
     kid = await _make_kid(db_session, family)
     await _fund(db_session, kid, "1000")
     await investing_service.buy(db_session, kid, "USD", "TEST", Decimal("3"))
+    lot_id = await _only_lot_id(db_session, kid)
 
-    await investing_service.sell(db_session, kid, "USD", "TEST", Decimal("1"))
+    await investing_service.sell(db_session, kid, "USD", lot_id=lot_id, units=Decimal("1"))
 
     portfolio = await investing_service.get_portfolio(db_session, kid, "USD")
     assert portfolio["holdings"][0]["units"] == Decimal("2")
-    # 1000 - 300 (buy 3) + 100 (sell 1) = 800
+    # 1000 - 300 (buy 3) + 100 (sell 1, no ticks yet so still $100/unit) = 800
     assert await debts_db_service.get_balance(db_session, kid.id) == Decimal("800")
 
 
-async def test_selling_entire_holding_removes_it(db_session, family, seeded_asset):
+async def test_selling_entire_lot_removes_it(db_session, family, seeded_asset):
     kid = await _make_kid(db_session, family)
     await _fund(db_session, kid, "1000")
     await investing_service.buy(db_session, kid, "USD", "TEST", Decimal("1"))
-    await investing_service.sell(db_session, kid, "USD", "TEST", Decimal("1"))
+    lot_id = await _only_lot_id(db_session, kid)
+
+    await investing_service.sell(db_session, kid, "USD", lot_id=lot_id, units=Decimal("1"))
 
     portfolio = await investing_service.get_portfolio(db_session, kid, "USD")
     assert portfolio["holdings"] == []
+
+    lot = await db_session.get(InvestmentLot, lot_id)
+    assert lot.is_open is False
+    assert lot.sold_at is not None
+
+
+async def test_sell_lot_rejects_more_than_held(db_session, family, seeded_asset):
+    kid = await _make_kid(db_session, family)
+    await _fund(db_session, kid, "1000")
+    await investing_service.buy(db_session, kid, "USD", "TEST", Decimal("1"))
+    lot_id = await _only_lot_id(db_session, kid)
+
+    with pytest.raises(investing_service.InvestingError, match="Cannot sell"):
+        await investing_service.sell(db_session, kid, "USD", lot_id=lot_id, units=Decimal("2"))
+
+
+async def test_buy_locks_in_family_boost_buffer_rate_on_the_lot(db_session, family, seeded_asset):
+    kid = await _make_kid(db_session, family)
+    await _fund(db_session, kid, "1000")
+    await investing_service.buy(
+        db_session, kid, "USD", "TEST", Decimal("1"), boost_buffer_rate=Decimal("3.000")
+    )
+
+    lot = await db_session.scalar(select(InvestmentLot).where(InvestmentLot.kid_id == kid.id))
+    assert lot.buffer_rate == Decimal("3.000")
+
+    # Buying again with no rate passed (boost off) must not retroactively
+    # touch the first lot's already-locked rate.
+    await investing_service.buy(db_session, kid, "USD", "TEST", Decimal("1"), boost_buffer_rate=None)
+    lots = list(await db_session.scalars(select(InvestmentLot).where(InvestmentLot.kid_id == kid.id)))
+    rates = {lot.buffer_rate for lot in lots}
+    assert rates == {Decimal("3.000"), None}
 
 
 async def test_sell_rejects_more_than_held(db_session, family, seeded_asset):
@@ -185,11 +238,18 @@ async def test_quote_purchase_snaps_amount_to_unit_step_and_recomputes_real_cost
     assert quote["cost"] != Decimal("15")
 
 
-async def test_day_change_pct_computed_from_history(db_session, family, seeded_asset):
-    # seeded_asset's history goes 90 -> 100, i.e. +11.11%
+async def test_day_change_pct_computed_from_lot_ticks(db_session, family, seeded_asset):
+    """A lot's day_change_pct comes from its own boosted-series' last two
+    points (boost_service), not PriceCache's history_json sparkline —
+    since_purchase_pct/get_portfolio no longer read live PriceCache at
+    all for a lot (see boost_service's module docstring)."""
     kid = await _make_kid(db_session, family)
     await _fund(db_session, kid, "1000")
-    await investing_service.buy(db_session, kid, "USD", "TEST", Decimal("1"))
+    await investing_service.buy(db_session, kid, "USD", "TEST", Decimal("1"))  # bought at $100
+    now = datetime.now(timezone.utc)  # comfortably after purchased_at
+
+    await _add_tick(db_session, "TEST", "90", now + timedelta(seconds=1))
+    await _add_tick(db_session, "TEST", "100", now + timedelta(hours=5))  # +11.11% vs the previous tick
 
     portfolio = await investing_service.get_portfolio(db_session, kid, "USD")
     pct = portfolio["holdings"][0]["day_change_pct"]
@@ -197,29 +257,13 @@ async def test_day_change_pct_computed_from_history(db_session, family, seeded_a
     assert round(pct, 2) == Decimal("11.11")
 
 
-async def test_since_purchase_pct_reflects_total_return_not_daily_change(db_session, family, seeded_asset):
-    """seeded_asset is priced at $100 with yesterday's close at $90 (that's
-    what day_change_pct uses) — since_purchase_pct must come from the
-    holding's own avg_cost instead, not get confused with the daily figure."""
+async def test_since_purchase_pct_reflects_total_return_not_last_tick_change(db_session, family, seeded_asset):
     kid = await _make_kid(db_session, family)
     await _fund(db_session, kid, "1000")
     await investing_service.buy(db_session, kid, "USD", "TEST", Decimal("1"))  # bought at $100
+    now = datetime.now(timezone.utc)  # comfortably after purchased_at
 
-    # Price rises to $150 after the purchase.
-    from datetime import datetime, timezone
-
-    from app.models.catalog import PriceCache
-
-    price_row = await db_session.get(PriceCache, "TEST")
-    price_row.price = Decimal("150")
-    price_row.updated_at = datetime.now(timezone.utc)
-    await db_session.flush()
-    # buy() now reads through the same cached price context get_portfolio
-    # does (see investing_service.py), so a direct mutation like this one
-    # needs the same cache-clear the real scheduler always does after a
-    # genuine price change — otherwise get_portfolio below would still
-    # see the pre-mutation $100 price cached from the buy() call above.
-    investing_service.clear_price_context_cache()
+    await _add_tick(db_session, "TEST", "150", now + timedelta(seconds=1))  # real price rises to $150
 
     portfolio = await investing_service.get_portfolio(db_session, kid, "USD")
     since_purchase = portfolio["holdings"][0]["since_purchase_pct"]
@@ -293,6 +337,70 @@ async def test_list_investment_transactions_orders_most_recent_first(db_session,
 
     rows = await investing_service.list_investment_transactions(db_session, kid.id)
     assert [r.id for r in rows] == [newer.id, older.id]
+
+
+async def test_get_lot_detail_returns_series_matching_the_headline_value(db_session, family, seeded_asset):
+    """The same walk backs both the number and the graph — see
+    investing_service.get_lot_detail's docstring — so this asserts they
+    can never disagree with each other."""
+    kid = await _make_kid(db_session, family)
+    await _fund(db_session, kid, "1000")
+    await investing_service.buy(db_session, kid, "USD", "TEST", Decimal("2"))
+    lot_id = await _only_lot_id(db_session, kid)
+    now = datetime.now(timezone.utc)
+    await _add_tick(db_session, "TEST", "120", now + timedelta(seconds=1))
+
+    detail = await investing_service.get_lot_detail(db_session, kid, lot_id)
+    assert detail is not None
+    assert detail["symbol"] == "TEST"
+    assert detail["description"] == "A test stock."
+    assert detail["units"] == Decimal("2")
+    assert detail["is_open"] is True
+    assert round(detail["since_purchase_pct"], 2) == Decimal("20.00")
+    assert len(detail["series"]) == 2
+    assert detail["series"][-1]["value"] == detail["current_value"]
+
+
+async def test_get_lot_detail_returns_none_for_another_kids_lot(db_session, family, seeded_asset):
+    kid = await _make_kid(db_session, family)
+    other_kid = await _make_kid(db_session, family, name="Other")
+    await _fund(db_session, kid, "1000")
+    await investing_service.buy(db_session, kid, "USD", "TEST", Decimal("1"))
+    lot_id = await _only_lot_id(db_session, kid)
+
+    assert await investing_service.get_lot_detail(db_session, other_kid, lot_id) is None
+
+
+async def test_sell_all_closes_every_open_lot_and_legacy_holding(db_session, family, seeded_asset):
+    from app.models.investment import InvestmentHolding
+
+    kid = await _make_kid(db_session, family)
+    await _fund(db_session, kid, "1000")
+    # Two separate lots of the same symbol (never merged — see buy()'s
+    # docstring) plus one pre-existing legacy avg-cost holding.
+    await investing_service.buy(db_session, kid, "USD", "TEST", Decimal("1"))
+    await investing_service.buy(db_session, kid, "USD", "TEST", Decimal("1"))
+    db_session.add(
+        InvestmentHolding(
+            kid_id=kid.id, symbol="TEST", units=Decimal("1"), avg_cost=Decimal("100"), avg_cost_currency="USD"
+        )
+    )
+    await db_session.flush()
+
+    balance_before = await debts_db_service.get_balance(db_session, kid.id)
+    txns = await investing_service.sell_all(db_session, kid, "USD")
+
+    assert len(txns) == 3
+    portfolio = await investing_service.get_portfolio(db_session, kid, "USD")
+    assert portfolio["holdings"] == []
+    # 3 units sold at $100 each ($100 real price, no boost since none was set).
+    assert await debts_db_service.get_balance(db_session, kid.id) == balance_before + Decimal("300")
+
+
+async def test_sell_all_is_a_no_op_for_a_kid_with_nothing(db_session, family):
+    kid = await _make_kid(db_session, family)
+    txns = await investing_service.sell_all(db_session, kid, "USD")
+    assert txns == []
 
 
 async def test_price_context_is_cached_across_calls(db_session, seeded_asset):

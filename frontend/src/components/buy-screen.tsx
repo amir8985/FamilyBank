@@ -7,10 +7,11 @@ import { useCachedResource } from "@/lib/use-cached-resource";
 import { api, ApiError } from "@/lib/api";
 import { BuyFormClient } from "@/components/buy-form-client";
 import { BuySkeleton } from "@/components/skeletons";
-import type { AssetDetailOut, PortfolioOut } from "@/lib/types";
+import type { AssetDetailOut, FamilySettings, PortfolioOut } from "@/lib/types";
 
 const ASSET_TTL_MS = 10 * 60_000;
 const PORTFOLIO_TTL_MS = 15_000;
+const SETTINGS_TTL_MS = 5 * 60_000;
 
 export function BuyScreen({
   kidId,
@@ -36,6 +37,11 @@ export function BuyScreen({
     () => api.get<PortfolioOut>(`/kids/${kidId}/portfolio`, token as string),
     { ttlMs: PORTFOLIO_TTL_MS }
   );
+  const settingsRes = useCachedResource<FamilySettings>(
+    token ? "family-settings" : null,
+    () => api.get<FamilySettings>("/family/settings", token as string),
+    { ttlMs: SETTINGS_TTL_MS }
+  );
 
   if (assetRes.error instanceof ApiError && assetRes.error.status === 404) notFound();
   if (assetRes.error && !assetRes.data) throw assetRes.error;
@@ -50,7 +56,15 @@ export function BuyScreen({
       ? Number(summary.cash_balance)
       : 0;
   const kidName = portfolio?.kid_name ?? summary?.name ?? "";
-  const existingHolding = portfolio?.holdings.find((h) => h.symbol === symbol) ?? null;
+
+  // A symbol can match more than one holding — buy() never merges
+  // separate purchases (boost lots). Used for the "you already own N
+  // units" line. The one holding this screen can still sell inline is a
+  // pre-lot legacy avg-cost holding (no lot_id) reached from My
+  // Investments — every lot-based one has its own /lots/[lotId] page.
+  const matchingHoldings = (portfolio?.holdings ?? []).filter((h) => h.symbol === symbol);
+  const sellableHolding =
+    backTab === "holdings" ? (matchingHoldings.find((h) => !h.lot_id) ?? null) : null;
 
   return (
     <BuyFormClient
@@ -61,7 +75,9 @@ export function BuyScreen({
       currency={home.base_currency}
       cashAvailable={cashAvailable}
       backHref={`/home/kids/${kidId}?tab=${backTab}`}
-      existingHolding={existingHolding}
+      matchingHoldings={matchingHoldings}
+      sellableHolding={sellableHolding}
+      boostBufferRate={settingsRes.data?.boost_buffer_rate ?? null}
     />
   );
 }

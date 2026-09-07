@@ -31,6 +31,125 @@ backend/    FastAPI + SQLAlchemy + Postgres (Neon) — see backend/README.md
 frontend/   Next.js 16 (App Router) + Tailwind v4 — see frontend/README.md
 ```
 
+## Status as of 2026-09-07 — worker-1: instant-UX branch merged with master's stock-boost feature
+
+**`worker-1` now carries BOTH the instant-UX / client-store work (its own
+"Instant UX" section immediately below) AND `master`'s stock-boost feature
+(merged in from `origin/master`).** The two overlapped heavily —
+`investing_service.py`, `portfolio-client.tsx`, `sell-sheet.tsx`,
+`buy-form-client.tsx`, `settings-form.tsx`, the buy page, `types.ts` — 6
+files had literal conflict markers. Resolution notes:
+- The boost feature's new screens (`settings/investing/*`, `lots/[lotId]`)
+  were server components doing blocking `await api.get()`; converted to the
+  same client + `useCachedResource("family-settings")` / `useFamily()`
+  pattern as the rest, so navigation into them is instant too.
+- `master` rewrote the sell flow into `SellControls` (shared by `SellSheet`
+  + `lot-detail-client`); kept that structure and just swapped its
+  `router.refresh()` for the client-store reconcile
+  (`invalidateResource(...)` + `refreshHome()`) at each `onSold` callback.
+  The standalone optimistic-sell from the instant-UX branch was dropped —
+  sell is a deliberate action like buy, and both keep their "Selling…" /
+  "Buying…" button (matching `master`'s own design).
+- `buy-screen.tsx` (the instant-UX orchestrator) now also fetches
+  `/family/settings` via `useCachedResource` for `boost_buffer_rate` and
+  passes `master`'s `matchingHoldings` / `sellableHolding` / `boostBufferRate`
+  props to `BuyFormClient`.
+- `prices_as_of` (instant-UX backend addition) survived the auto-merge in
+  `compute_portfolio` + both schemas + `routes_kids`.
+- Verified after merge: `cd backend && pytest` (all pass), frontend
+  `build` + `lint` clean, Playwright smoke of the merged app.
+
+<details><summary>Original stock-boost merge wrap-up (from master, pre-merge)</summary>
+
+**The stock-boost feature (full detail in the "stock boost feature" status
+entry below — this is the finish-feature/merge wrap-up, not a re-description)
+is done, merged with `origin/master`, reviewed, and ready to merge to
+`master`.** Built entirely in `FamilyBank-worker-3` on branch
+`boosted-stocks-and-interest`; `master` had meanwhile diverged substantially
+(production-latency investigation, request-log retention, rate limiting,
+frontend loading/error boundaries, an Android TWA wrapper — none of it
+touching the boost feature's own files directly, but several of them
+touched the *same* functions this feature also rewrote).
+
+- **Merging in `origin/master` required real conflict resolution, not just
+  accepting a side.** Three files had literal conflict markers:
+  - `CLAUDE.md` — both branches had appended their own dated "Status as
+    of" section on top of the same shared history; resolved by keeping
+    both, newest first, and disambiguating the two identically-dated
+    "2026-09-06" headings (one for this feature, one for the pre-existing
+    request-logging/currency-history work) since master's own new content
+    made a bare date no longer unique.
+  - `backend/app/scheduler/jobs.py` — master had split the old
+    `_refresh_prices()` into `_fetch_prices()`/`_write_prices()` (a perf
+    fix, to avoid holding a DB connection open during the ~10s of external
+    HTTP calls) and added `RequestLog` cleanup; this branch's `PriceTick`
+    insert (needed for boost_service to have tick history to walk) had to
+    move into master's new `_write_prices()`, right after its `PriceCache`
+    upsert, rather than living in the now-deleted monolithic function.
+  - `backend/tests/test_investing_service.py` — two separate real
+    conflicts, not just noise: (1) master's
+    `test_buying_twice_averages_cost_and_sums_units` had a name and
+    docstring describing the *old* avg-cost blending behavior, but its
+    actual body already asserted the *new* per-lot behavior (two distinct
+    lots, two distinct lot_ids) — kept this branch's correctly-named
+    `test_buying_twice_creates_two_separate_lots` instead (same body,
+    honest name) alongside master's genuinely new, unrelated
+    `test_buy_rejects_cleanly_when_fx_rate_is_missing`. (2) master's
+    `test_since_purchase_pct_reflects_total_return_not_last_tick_change`
+    mutated `PriceCache` directly and cleared the price-context cache,
+    which was correct for the *old* avg-cost `since_purchase_pct` (still
+    computed from live `PriceCache`) but wrong for a lot, whose
+    `since_purchase_pct` this feature computes from `boost_service`
+    walking `price_ticks` instead (see `investing_service._lot_entry`) —
+    kept this branch's `_add_tick`-based version, the only one that
+    actually exercises the code path a lot-based holding uses.
+  - **`backend/app/services/investing_service.py` and
+    `backend/app/api/routes_investing.py` auto-merged with no conflict
+    markers, but the result was still broken** — worth internalizing:
+    a clean textual 3-way merge is not proof of a semantically correct
+    one when both branches rewrote the same functions for different
+    reasons (this branch: per-lot buy/sell; master: routing every price
+    read through `load_price_context()`/`ctx.prices.get()` instead of
+    live per-call queries, and replacing separate `get_kid`+`get_family`
+    dependencies with a combined `get_kid_and_family`). Running the test
+    suite immediately after the merge commit caught it: `routes_investing.sell_all`
+    still used the pre-merge `Depends(get_family)` pattern, but master's
+    side of the merge had dropped `get_family` from this file's imports
+    entirely (replaced by the combined dependency) — `NameError: name
+    'get_family' is not defined` at import time, which means the whole
+    app would have failed to even start. Fixed by switching `sell_all` to
+    the same `KidAndFamily`/`get_kid_and_family` pattern every other route
+    in this file already uses. **Lesson: after resolving a merge with any
+    auto-merged (marker-free) file that both branches touched
+    substantively, run the test suite before trusting the merge — don't
+    assume "no conflict markers" means "no conflict."**
+- **Verified after the merge, not just assumed clean:** all 101 backend
+  tests pass (`cd backend && pytest`, up from the 65 mentioned in an older
+  status entry below — most of the growth is this feature's own
+  `test_boost_service.py`/`test_boost_settings.py` plus expanded
+  `test_investing_service.py` coverage), `alembic upgrade head` applies
+  cleanly against the shared dev/test DB (already at `0011`, migration
+  chain `0009→0010→0011` intact now that the real `0010_request_logs.py`
+  replaced this branch's placeholder), and `npm run build`/`npm run lint`
+  are both clean.
+- Reviewed every backend file in the diff line-by-line plus the bulk of
+  the frontend components as part of this same pass (both the "senior dev
+  review" and "self code review" steps of this project's finish-feature
+  workflow, done together rather than as two separate passes) — found
+  exactly the one real bug above (the dangling `get_family` reference);
+  nothing else worth flagging turned up (no dead code, no debug leftovers,
+  no unused imports — grepped for all three across the full feature diff).
+- Backend bumped 1.5.0 → 1.6.0, frontend 0.6.0 → 0.7.0 (both minor: a real
+  new user-facing feature, not a patch-sized fix).
+- **Not yet done as of this entry**: push the branch, merge to `master`,
+  cut the next branch — gated on explicit user confirmation per this
+  project's permissions (destructive/shipping steps are never taken
+  autonomously here). If you're reading this and those still haven't
+  happened, that confirmation is the next thing blocking this feature
+  from reaching production.
+
+</details>
+
 ## Status as of 2026-09-07
 
 **Instant UX: client-side data store + optimistic writes (frontend
@@ -439,7 +558,369 @@ users), requested directly — findings, and what's still open:**
   `/kids/{id}/debt`) — the remaining per-endpoint query counts are
   already about as low as they can be within one session/connection.
 
-## Status as of 2026-09-06
+## Status as of 2026-09-06 — stock boost feature
+
+**Stock "boost" feature — backend built and tested, settings UI built and
+manually verified; kid-facing portfolio UI NOT yet wired up (see gap
+below).** Born from a user request to make small stock positions feel
+less boring, without literal leverage (rejected — too much real downside)
+or a cosmetic-only multiplier (rejected — doesn't compete economically
+with the separately-planned "interest from parent" idea, deferred this
+round). Landed design: a family-wide `boost_buffer_rate` (monthly %,
+`families.boost_buffer_rate`) that only ever *adds* to a stock's return
+on a tick where the real price rose — never on a down-tick, so real
+daily volatility/downside is untouched, only the long-run expected value
+is tilted up.
+
+- **New `price_ticks` table** (`app/models/catalog.py`): append-only,
+  one row per symbol per scheduler refresh, written alongside the
+  existing overwrite-only `PriceCache` in `scheduler/jobs.py`. This is
+  what makes the boost math possible at all — `PriceCache` only ever
+  has "now", so there was previously no way to reconstruct a stock's
+  path since a specific purchase moment.
+- **New `investment_lots` table** — every stock purchase now creates its
+  own permanent, independent lot (`investing_service.buy()` no longer
+  writes to the old `investment_holdings` avg-cost table at all,
+  boosted or not — this was a deliberate scope decision made with the
+  user: unify on one model rather than keep two, since a lot's fixed
+  purchase timestamp is what makes a real "since purchase" graph
+  possible for every holding, not just boosted ones). Two purchases of
+  the same symbol are never blended — they show up as two separate
+  entries, sellable independently (partial sells reduce a lot's units;
+  selling to zero closes it). Old `investment_holdings` rows from before
+  this shipped are untouched and still sellable via the legacy code path
+  in `investing_service.sell()` (dispatches on `lot_id` vs `symbol`).
+- **`boost_service.py`'s `_walk`/`compute_lot_series`/`compute_lot_value`
+  — deliberately stateless.** No persisted checkpoint or accrued-factor
+  column anywhere: a lot's whole synthetic trajectory (and thus its
+  current value *and* its since-purchase graph — same function, one
+  returns the last point, the other the whole series) is recomputed from
+  scratch on every read, by walking `price_ticks` from the lot's
+  `purchased_at`. This was a real back-and-forth with the user — the
+  first design tracked a separately-maintained "boost factor" applied to
+  the live current price, which turned out to be the wrong shape (it
+  couldn't produce one coherent "real value including the boost
+  throughout the whole period," and needed a write-on-read checkpoint,
+  which is exactly the FastAPI-autobegin trap in "Lessons learned"
+  below). Full recompute is only viable because of the scale this app
+  runs at (a family has at most a couple dozen open lots; a symbol
+  accrues a few thousand ticks/year) — don't copy this pattern
+  somewhere with real per-user volume without reconsidering it.
+- **The rate is family-wide, not per-kid or per-symbol**, and can only be
+  set/changed while *every* kid in the family holds zero stock at all
+  (legacy holdings or open lots — `investing_service.has_open_positions`,
+  enforced in the new `PATCH /family/settings/boost-buffer-rate`). This
+  guarantees every lot open at any moment shares exactly one rate — no
+  mid-holding rate change to reason about. The user wants this
+  auto-sell-then-rebuy-at-the-new-rate eventually; for now the parent
+  has to sell everything by hand first.
+- **The per-tick bonus is prorated by real elapsed wall-clock time**
+  (`HOURS_PER_MONTH = 730.5`), not a fixed assumed tick count — the
+  scheduler's tick spacing is irregular (a relative sleep loop that
+  stops entirely while the backend process is idle, see
+  `scheduler/loop.py`), so a fixed "%/tick" would over- or under-shoot
+  depending on how often the process happened to be awake.
+- **Settings UI — two-tier structure, iterated live against direct user
+  copy feedback (treat as production-bound text, not placeholder).**
+  `/home/settings/investing` is a hub page (currently just one card) —
+  a short marketing-style pitch for "Stock boost" plus a button to
+  `/home/settings/investing/boost`, which holds the actual controls
+  (`boost-settings-form.tsx`): toggle, a 0.1%-stepped rate input (short
+  recommendation line, default 3.0%), two short plain-language
+  paragraphs on what the boost does, and a worked dollar example ("$50
+  into the S&P... about $51 without a boost, about $52.50 with one").
+  This hub/sub-page split is deliberate groundwork for the deferred
+  interest feature to slot in as a second card later — see spec at the
+  top of `investing/page.tsx`. Linked from a "Advanced investing &
+  savings settings" row on the main Settings page, no subtitle (an
+  earlier version named the not-yet-built interest feature there, which
+  the user asked to remove since it isn't real yet).
+  **A real copy correction worth remembering**: an earlier draft framed
+  the boost as "not coming from the market, coming from you" as if
+  market gains were somehow different — the user caught that this
+  contradicts the app's own core framing (spec section 0): *everything*
+  here is virtual, so a "real" market gain is exactly as much "from the
+  parent" as a boosted one is. Reframed to avoid that false contrast
+  entirely — the example now just calls the extra "your treat on top,"
+  warmly, not a solemn warning about who's really paying. If writing
+  parent-facing copy about any gain/cost in this app, re-check it
+  against that same framing before shipping it.
+  Manually verified against a live dev server with Playwright
+  (screenshots + a real save/reload round-trip against the DB, and the
+  hub→boost-page click-through) — see "Lessons learned" below for how
+  the auth was faked for that, since it's a reusable trick.
+- **Fixed same-day, and worth flagging exactly how it was missed:**
+  `SellSheet` and the buy/sell screens still sent the old `{symbol,
+  units}` shape after `buy()` was rewired to lots — since a symbol can
+  now match more than one lot, this wasn't just "the UI looks slightly
+  off," it was a hard functional break: selling *any* stock bought after
+  this shipped failed outright (no legacy `InvestmentHolding` row for it
+  to find), and two purchases of the same symbol were indistinguishable
+  in the UI (both linked to one page that could only ever act on
+  whichever one happened to match first). Fixed by threading `lot_id`
+  through: `portfolio-client.tsx`'s per-row link now carries
+  `?lot=<lot_id>`; `buy/[symbol]/page.tsx` resolves the specific
+  clicked holding from that instead of a bare `.find(h => h.symbol ===
+  symbol)`; `SellSheet` sends `lot_id` when present, `symbol` only for
+  a genuine pre-feature legacy holding. Verified for real with
+  Playwright against a live dev server: bought the same symbol twice,
+  confirmed two distinct rows/URLs, sold one, confirmed via the API
+  that only that exact lot closed and the other was untouched.
+  **Why the backend test suite passing didn't catch this**: the API
+  test that exercises buy→sell was itself updated, as part of the same
+  change, to send the new `lot_id` shape — which proves the backend
+  handles a well-formed request correctly, but says nothing about
+  whether the actual frontend still constructs one. A backend-only
+  "tests pass" claim after changing a request/response contract that
+  existing frontend code depends on is not the same as verifying that
+  frontend code — the fix is to actually click through any *existing*
+  screen whose backend contract changed, not just a screen whose files
+  you touched directly.
+- **Per-lot graph screen — built, then became the canonical "view/sell an
+  owned lot" screen after user feedback.** `/home/kids/[kidId]/lots/[lotId]`
+  (`lot-chart.tsx` — a plain inline SVG polyline, deliberately not a
+  charting library for one simple line) renders the exact same `series`
+  `boost_service.compute_lot_series` produces, so the chart and the
+  headline number can never disagree.
+  First version linked it from a "Chart" link inside the *Buy* screen's
+  "you own this" banner — the user then pointed out (with a screenshot)
+  that a screen titled "Buy AMZN" showing a buy form was wrong for
+  viewing an *already-owned* position, and that its sparkline was the
+  generic asset-level one, not a since-purchase graph. Root cause:
+  `portfolio-client.tsx`'s "My Investments" rows still linked every
+  holding to the Buy screen. **Fixed by routing differently based on
+  what a holding actually is**: a lot (`lot_id` present) now links
+  straight to `/lots/[lotId]` — no buy form ever shown, and the correct
+  purchase-scoped chart, both automatically, since that page never had
+  a buy form or generic sparkline to begin with. Only a pre-lot legacy
+  avg-cost holding (no `lot_id`, can't have its own detail page) still
+  goes to the Buy screen's banner. Sell itself was also moved onto the
+  lot page directly — `SellSheet` is now opened from `lot-detail-client.tsx`
+  instead of round-tripping through `/buy/[symbol]?lot=...`, which stays
+  reachable but is no longer how a real user gets there.
+  Also added, from the same feedback: a tap-to-reveal explanation on the
+  "Boosted X%/mo" badge (kept to just this page, not the list rows,
+  since nesting a button inside `portfolio-client.tsx`'s `<Link>` risks
+  both an a11y issue and swallowed/ambiguous click handling — a static
+  badge there is the safer trade-off).
+  **A real bug found via testing this, not requested but worth fixing
+  immediately since it shipped in the same change**: a fully-sold lot's
+  `units` drops to 0 (see `_sell_lot`), so `current_value * units` on
+  the detail page rendered a misleading "$0.00" for anything sold in
+  full. Fixed two-sided: `boost_service.compute_lot_series` gained an
+  `until` parameter so a closed lot's history is capped at `sold_at`
+  instead of continuing to "move" from ticks that landed after the kid
+  no longer held it, and `get_lot_detail` now returns the already-
+  captured `sale_value`/`sold_at` for a closed lot rather than trying
+  to recompute a value from (now correctly near-empty) post-sale
+  history. The frontend shows a closed lot's per-unit sale price
+  instead of a total, since the original unit count is gone once units
+  hits 0.
+  Verified with synthetic `PriceTick` rows inserted directly (real
+  ticks take hours to accumulate), including one deliberately dated
+  *after* a full sell, to confirm the closed lot's number and chart
+  both ignored it.
+  **One more round of feedback on the same screenshot**: the sell UI
+  itself was a "Sell this" button opening a `SellSheet` popup — asked to
+  drop the popup entirely in favor of a direct "Sell all" action plus
+  the picker (units stepper, proceeds, confirm) shown inline on the page
+  at all times. Extracted the picker into a new `sell-controls.tsx`
+  (shared by both the inline lot page and the still-popup-based
+  `SellSheet` used on the Buy screen for legacy holdings) so the same
+  math/API-call logic isn't duplicated — `SellSheet` is now just
+  `BottomSheet` + `SellControls`. The picker's own internal shortcut was
+  relabeled "Max" (was "Sell all") to avoid two same-labeled controls on
+  one screen now that a real "Sell all" button exists above it.
+  **Then simplified further, and re-colored**: the standalone "Sell all"
+  button was actually dropped again — merged into the picker's own
+  confirm button instead, which now reads "Sell all for $X" when the
+  stepper is at max units and "Sell for $X" otherwise, and switched from
+  `bg-emerald` (this app's buy/positive color) to `bg-negative`
+  (matches "Deduct"'s styling in `debt-sheet.tsx`) since a sell action
+  reading in green looked wrong to the user. This removed the whole
+  two-button/divider structure entirely — one control, correctly colored.
+  Also from the same feedback round: the hub page
+  (`/home/settings/investing`) now fetches `FamilySettings` and shows a
+  small "Active" pill on the Stock boost card when a rate is set, so a
+  parent can see status without a click; the boost page's toggle row was
+  relabeled "Boost active" (was "Boost stock gains" — reads as a state,
+  not an instruction); and a successful save now `router.push`es back to
+  `/home/settings` instead of leaving the parent stranded on the boost
+  page — chosen specifically to avoid adding any new UI element for
+  "how do I get back", per the user's ask to not overload this screen.
+- **One more pass on the boost page + two new features, from a fresh
+  round of screenshots.** The "Boost active" label was itself corrected
+  again to **"Stock boost active"** — don't re-shorten it. The
+  explanation/rate-picker/example were unconditionally hidden behind
+  `{enabled && ...}`; changed to always render regardless of the
+  toggle, since a parent should be able to read what this does and
+  preview a rate *before* deciding to turn it on. The back chevron
+  (`PageHeader`'s `backHref`) now skips the one-card hub and goes
+  straight to `/home/settings` — asked for "a faster way back," and
+  since the hub has nothing worth stopping at with only one card in it,
+  skipping it outright (not just after a save) was the actual fix, not
+  the router.push-on-save from the previous round alone.
+  **New: a portfolio-wide "Sell everything" button** on the kid's
+  My Investments tab (`portfolio-client.tsx`) — backed by a new
+  `investing_service.sell_all()` / `POST /kids/{id}/sell-all` that
+  closes every open lot and legacy holding for a kid in one call (reuses
+  `_sell_lot`/`sell()` per position, not a new sell code path). Has a
+  native `confirm()` — the only sell action in this feature with one,
+  since liquidating an entire portfolio in one tap is meaningfully more
+  consequential than any single-lot sell.
+  **New: the "Boosted X%/mo" tappable badge now also appears on the Buy
+  screen** (not just an owned lot's own pages) — extracted into shared
+  `ui/boosted-badge.tsx` (`BoostedBadge` + `BoostedExplanation`, both
+  now used by `lot-detail-client.tsx` and `buy-form-client.tsx`) so
+  buying a new stock shows upfront that it'll be boosted, using the
+  family's current `boost_buffer_rate` rather than a specific lot's
+  locked-in one (the purchase hasn't happened yet).
+- **Fourth feedback round — three UI fixes plus the sell-and-rebuy
+  feature that earlier notes flagged as a "future" possibility.**
+  (1) "Sell everything" now shows the amount (`Sell everything for
+  $X`, using `portfolio.holdings_value` — already the exact right
+  number, no new calculation needed).
+  (2) **The Buy screen no longer offers Sell at all**, even for a
+  symbol the kid already owns — browsing to buy and managing an
+  existing position are different intents, and conflating them was the
+  root cause of an earlier session's "Buy AMZN" screen showing a Sell
+  button. Now: `sellableHolding` in `buy/[symbol]/page.tsx` is only ever
+  non-null when `from === "holdings"` *and* the match is a legacy
+  avg-cost holding (no `lot_id`) — the sole remaining case this screen
+  sells directly, since a legacy holding has no dedicated page of its
+  own the way a lot does. Every other case (browsing to buy, or already
+  owning lots) shows a plain "You already own N units, worth $X" line
+  with no interactive element at all — no Sell, no Chart link.
+  (3) **Two real bugs found from one user report, both now fixed**: (a)
+  `SellControls`' unit stepper got stuck after a partial sell — the
+  component doesn't unmount across a `router.refresh()`, so its
+  `unitsStr` state kept the pre-sell value even though `holding.units`
+  (the prop) had shrunk, clamping both +/- buttons disabled. Fixed by
+  adjusting state during render when `holding.units` changes (React's
+  documented pattern for this — a `useEffect` calling `setState`
+  synchronously trips this project's lint rule and is the wrong tool
+  here regardless). (b) Selling from the lot detail page — full or
+  partial — now navigates to `/home/kids/{kidId}` afterward instead of
+  staying put; a sell's natural conclusion is returning to the
+  portfolio, not lingering on a now-stale single-lot page.
+  (4) **New: `investing_service.apply_boost_rate_change_with_rebuy` +
+  `POST /family/settings/boost-buffer-rate/sell-and-rebuy`** — the
+  "future" auto-migration mentioned in earlier status notes, now built.
+  Snapshots every kid's every position (symbol + units, lots and legacy
+  holdings alike) *before* selling anything, sells everything for every
+  kid, changes `family.boost_buffer_rate`, then rebuys each snapshotted
+  position at the new rate. No new commit inside the function — the
+  route's single outer commit is what makes the whole migration atomic
+  (any failure mid-way rolls every sell/buy/rate-change back together,
+  same mechanism already relied on elsewhere in this file). Surfaced on
+  the boost settings screen as a small red "⚠ Sell everything and rebuy
+  with the new boost" line that appears only after the normal save hits
+  the existing 409 guard — clicking it opens a `confirm()` spelling out
+  exactly what will happen (matches this app's existing convention for
+  consequential actions, e.g. `handleRemoveKid`) before calling the new
+  endpoint. Verified live end-to-end: rate changed family-wide, the same
+  symbol/unit count came back under a **new** lot id (proving it was
+  genuinely re-sold and re-bought, not just relabeled), and cash netted
+  back to the pre-sell amount since sell and rebuy happen at the same
+  price.
+- **Fifth feedback round, two more fixes.** (1) The lot detail page was
+  missing the asset's description text that the Buy screen already
+  shows (e.g. "Amazon started as an online bookstore...") — added
+  `description` to `LotDetailOut`/`get_lot_detail` (sourced from
+  `AssetCatalog.description`, same field the catalog/buy screens
+  already use) and rendered it on `lot-detail-client.tsx` in the same
+  spot the Buy screen uses. (2) The sell-and-rebuy confirmation used a
+  bare browser `confirm()` — replaced with a proper in-app sheet
+  (`sell-and-rebuy-sheet.tsx`, red/warning-toned, a numbered list of
+  exactly what will happen, `bg-tint-negative`/`text-negative` matching
+  this app's existing warning-color tokens rather than introducing a
+  new one) — `boost-settings-form.tsx` now opens this sheet instead of
+  calling `confirm()` directly, and only actually calls the endpoint
+  from the sheet's own confirm button.
+- **Sixth round: a copy pass on the boost settings page itself — flagged
+  by the user as still a draft, not finalized.** The hub card's short
+  teaser now also repeats right under the "Stock boost active" toggle.
+  Added a new opening paragraph stating the actual purpose (make gains
+  more visible/felt) plus a comparison to savings interest (recommend
+  setting the boost at least 1% above whatever savings rate is offered,
+  written to make sense even before the deferred interest feature
+  exists). Replaced the vague "cheering your kid on" paragraph — user
+  called it poorly worded — with a plain, light-touch warning that the
+  rate compounds *monthly*, so it adds up on a large balance over time.
+  The example's math changed too: it previously assumed the *entire*
+  nominal rate applies every month, which is wrong (the boost only
+  accrues on up-ticks — see `boost_service._walk`) and used a 2%/month
+  "typical" gain the user correctly flagged as unrealistic for the
+  S&P 500 (real long-run average is closer to 0.8%). Now uses 1%/month
+  and shows the proration explicitly (illustrative "about two-thirds of
+  days were up, so about two-thirds of the rate applied") rather than
+  implying the full rate always lands — `EXAMPLE_MONTHLY_GAIN_PCT` and
+  the new `EXAMPLE_UP_DAY_FRACTION` constant in `boost-settings-form.tsx`
+  drive this. If asked to touch this copy again, re-read this whole
+  entry first — several of these were direct corrections to an earlier
+  version that looked reasonable in isolation but didn't hold up.
+- **Seventh round — a straight copy-editing pass, not a content
+  change.** The user called out the previous round's prose as reading
+  visibly AI-written: the same em-dash "setup — payoff" rhythm repeated
+  in nearly every paragraph, plus one paragraph phrased as "not just
+  X — Y" antithesis. Tightened every paragraph to vary sentence rhythm
+  and cut redundant clauses (the example went from three em-dashes to
+  one). The hub card's teaser, added to this page two rounds ago at the
+  user's own request, was removed again on their own follow-up call —
+  it's back to living only on the hub. The monthly-compounding warning
+  was also corrected on substance, not just style: it originally said
+  "adds up every month, not just once," which the user pointed out is
+  backwards — the *configured rate* is monthly, but what a kid actually
+  earns lands in small *daily* pieces (matches the "~0.10% added on a
+  day it's rising" line already on this page) — now reads "The rate is
+  monthly, but your kid earns it in small daily pieces." If touching
+  this copy again, preserve that rhythm variety rather than reverting
+  to a uniform em-dash pattern.
+- **Eighth round — two more corrections on the same page.** The purpose
+  paragraph still didn't land; the user asked for it to literally open
+  with "The idea behind the stock boost is..." — done verbatim. The
+  monthly-compounding line was missing the actual point: the user
+  wants a parent to viscerally register that 3%/month is enormous
+  next to a real-world savings rate (quoted per *year*), without
+  sounding alarmist. Added a live, rate-dependent calculation — new
+  `RATE_CONTEXT_AMOUNT` (1000) and `yearlyBoostOnRateContext =
+  1000 * ((1 + rate/100)**12 - 1)`, using whatever rate the stepper is
+  *currently* on (not the fixed `RECOMMENDED_RATE` the worked Example
+  box anchors to) — so the paragraph updates live as the parent moves
+  the stepper: "At 3.0%/month, $1,000 held for a year earns about
+  $425.76 from the boost alone." A concrete, moving number in context
+  does the "this is a lot" job better than another adjective would.
+- **Deferred by explicit user request, not forgotten:** "interest from
+  parent" (a simpler flat monthly rate on cash balance, meant to compete
+  economically with the stock boost) — discussed at length but
+  intentionally out of scope for this round.
+
+**Migration numbering collision across parallel worktrees actually
+happened this session — worth internalizing, not just the abstract
+warning below.** While building the above, `alembic upgrade head` was a
+silent no-op: another worker session (`observability-logging` branch, a
+different worktree entirely) had already claimed revision `0010` for an
+unrelated `request_logs` table and run it against the *shared* dev/test
+DB before this branch's own `0010` file existed. Alembic matches
+revisions by the `revision` string, not the filename or which worktree
+wrote it — so this branch's different `0010` content was treated as
+"already applied" and silently never executed, with no error. The fix
+was renumbering this branch's real migration to `0011`, and — since the
+other worktree's actual file was uncommitted and unreachable from here —
+reconstructing a best-effort placeholder `0010_request_logs_placeholder.py`
+(schema introspected directly off the live shared DB) just so this
+worktree's own alembic graph resolves. **That placeholder must be
+deleted once the real `0010_request_logs.py` lands on master** (confirmed
+with the other worker over cross-session messaging) — check
+`alembic/versions/` for a duplicate `0010` before merging this branch.
+Lesson: checking `versions/` for the next free number (as this file
+already says) isn't enough when several worktrees share one live DB —
+the actual danger is a same-numbered revision from an *uncommitted*
+migration in another worktree already having run against the shared DB,
+which a `git`-only check can't see. Run `alembic current` against the
+shared DB, not just `ls versions/`, before trusting a number is free.
+
+## Status as of 2026-09-06 — request logging, currency history, and earlier work
 
 **Built and verified:** the full v1 flow — Google-only sign-in →
 onboarding (currency + first kids) → home (balances, add/deduct) → kid
@@ -904,6 +1385,47 @@ worktree/checkout.
   genuine bug for several minutes before realizing the server just
   hadn't restarted. `--reload` watches file changes (including ones from
   git) and avoids this entirely.
+- **The ghost-port issue above recurred multiple times in one session**
+  (2026-09-06, same worktree) — and this time it was caught with hard
+  evidence of the actual mechanism: `Get-NetTCPConnection -LocalPort
+  <port>` returned **two different PIDs both `Listen`ing on the exact
+  same port simultaneously** (confirmed via `netstat` too). One was a
+  genuinely fresh `uvicorn --reload` process (verified via
+  `Get-CimInstance Win32_Process`'s `CommandLine` — a real, current
+  process, not a phantom), the other an old one that should have died
+  when a prior `Stop-Process` ran but evidently didn't. Requests were
+  routed to *whichever one felt like answering* — so a fresh restart,
+  even a *verified* fresh restart with a clean startup log, is not
+  proof you're talking to it: `curl` a field/endpoint you know only the
+  new code has (not just "does it respond") before trusting a restart
+  actually took effect. `Get-CimInstance` failing to resolve a PID that
+  `netstat`/`Get-NetTCPConnection` shows as `LISTENING` is the tell that
+  a second, unkillable listener exists — don't waste time trying to
+  identify or kill it (both attempts failed again this session); move
+  the whole stack to a brand-new port instead (update both
+  `frontend/.env.local` **and** restart the frontend process itself,
+  since Next.js only reads `.env.local` at process start, not on hot
+  reload) and get on with it. Treat "the running server disagrees with
+  the code on disk" as this issue by default on this project before
+  assuming a real regression.
+- **To screenshot a page behind `requireSession()` without real Google
+  OAuth**: mint a backend JWT with `issue_session_token(...)` (as the
+  synthetic test family), then separately mint a matching Auth.js v5
+  session cookie with `next-auth/jwt`'s `encode({ token: { backendToken,
+  familyId, baseCurrency, sub }, secret: process.env.AUTH_SECRET, salt:
+  "authjs.session-token" })` — `salt` must be the literal cookie name,
+  not a random value. Set that as a `Playwright` context cookie
+  (`name: "authjs.session-token"`, `domain: "localhost"`) before
+  `page.goto(...)`. Two gotchas that ate real time: (1) the `encode`/
+  Playwright script needs to run with Node resolving modules from
+  `frontend/`'s own `node_modules` (write it into that directory, not
+  a temp dir, or `require("next-auth/jwt")` fails) and needs real
+  Windows-style paths (`C:/...`), not git-bash's `/c/...` — a path
+  embedded in JS source doesn't get MSYS's automatic argument rewriting;
+  (2) the frontend and backend dev ports must actually match what
+  `backend/.env`'s `CORS_ORIGINS` allows, or every client-side `fetch`
+  silently fails as a CORS preflight rejection that looks nothing like
+  an auth problem.
 - **Even *with* `--reload`, don't assume every edited file actually got
   picked up.** Editing two files in quick succession, WatchFiles logged
   only one "detected changes in ... Reloading" line and never restarted
@@ -1008,7 +1530,7 @@ their dev servers simultaneously without colliding:
 |---|---|---|
 | `FamilyBank-worker-1` | 8011 | 3011 |
 | `FamilyBank-worker-2` | 8012 | 3012 |
-| `FamilyBank-worker-3` | 8013 | 3013 |
+| `FamilyBank-worker-3` | 8097 (rotated *five* times across 2026-09-06–07 — 8091→8094→8095→8096→8097 — chasing the ghost-listener bug below, which keeps recurring even on a genuinely fresh `--reload` process; check `netstat`/`Get-NetTCPConnection`/`frontend/.env.local` for the current truth rather than trusting this table, and don't be surprised if it's moved again. Given how often `--reload` alone has turned out to be lying about serving current code this session, **prefer a full kill-and-restart over trusting a reload notice** before believing a route/field is "still missing") | 3013 |
 
 First time in a given worktree, install deps (not shared across
 worktrees — `.venv`/`node_modules` are gitignored), then start with the

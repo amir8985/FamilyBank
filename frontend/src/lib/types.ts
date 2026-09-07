@@ -25,6 +25,9 @@ export type FamilyHome = {
 export type FamilySettings = {
   base_currency: string;
   onboarding_completed: boolean;
+  // Monthly %, e.g. "3.000" — null means boost is off. Applies to every
+  // kid in the family (see backend/app/models/family.py's docstring).
+  boost_buffer_rate: string | null;
 };
 
 export type KidCurrencyPreview = {
@@ -87,6 +90,32 @@ export type HoldingOut = {
   current_value: string;
   day_change_pct: string | null;
   since_purchase_pct: string | null;
+  // Present only for a purchase made after the boost feature shipped
+  // (an investment_lot) — null for a pre-existing avg-cost holding.
+  lot_id: string | null;
+  is_boosted: boolean;
+};
+
+export type LotPointOut = {
+  observed_at: string;
+  value: string;
+};
+
+export type LotDetailOut = {
+  lot_id: string;
+  symbol: string;
+  display_name: string;
+  description: string;
+  units: string;
+  purchase_price: string;
+  purchase_currency: string;
+  purchased_at: string;
+  buffer_rate: string | null;
+  is_open: boolean;
+  sold_at: string | null;
+  current_value: string;
+  since_purchase_pct: string | null;
+  series: LotPointOut[];
 };
 
 export type PortfolioOut = {

@@ -1,8 +1,9 @@
-from app.models.catalog import AssetCatalog, FxRateCache, PriceCache
+from app.models.catalog import AssetCatalog, FxRateCache, PriceCache, PriceTick
 from app.models.debt_transaction import DebtTransaction, DebtTransactionType
 from app.models.family import Family
 from app.models.investment import (
     InvestmentHolding,
+    InvestmentLot,
     InvestmentTransaction,
     InvestmentTransactionType,
 )
@@ -14,10 +15,12 @@ __all__ = [
     "AssetCatalog",
     "FxRateCache",
     "PriceCache",
+    "PriceTick",
     "DebtTransaction",
     "DebtTransactionType",
     "Family",
     "InvestmentHolding",
+    "InvestmentLot",
     "InvestmentTransaction",
     "InvestmentTransactionType",
     "Kid",

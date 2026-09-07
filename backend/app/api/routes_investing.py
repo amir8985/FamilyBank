@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,6 +11,7 @@ from app.schemas.investing import (
     BuySellQuoteRequest,
     BuySellQuoteResponse,
     InvestmentTransactionOut,
+    LotDetailOut,
     PortfolioOut,
     SellRequest,
 )
@@ -58,7 +61,9 @@ async def buy(
 ) -> InvestmentTransactionOut:
     kid, family = kid_family.kid, kid_family.family
     try:
-        txn = await investing_service.buy(db, kid, family.base_currency, body.symbol, body.units)
+        txn = await investing_service.buy(
+            db, kid, family.base_currency, body.symbol, body.units, boost_buffer_rate=family.boost_buffer_rate
+        )
     except investing_service.InvestingError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     # buy()'s internal db.transaction() only opens a real transaction if
@@ -76,8 +81,33 @@ async def sell(
 ) -> InvestmentTransactionOut:
     kid, family = kid_family.kid, kid_family.family
     try:
-        txn = await investing_service.sell(db, kid, family.base_currency, body.symbol, body.units)
+        txn = await investing_service.sell(
+            db, kid, family.base_currency, symbol=body.symbol, units=body.units, lot_id=body.lot_id
+        )
     except investing_service.InvestingError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     await db.commit()  # see buy() above for why this is needed, not redundant
     return InvestmentTransactionOut.model_validate(txn, from_attributes=True)
+
+
+@router.post("/sell-all", response_model=list[InvestmentTransactionOut])
+async def sell_all(
+    kid_family: KidAndFamily = Depends(get_kid_and_family),
+    db: AsyncSession = Depends(get_db),
+) -> list[InvestmentTransactionOut]:
+    kid, family = kid_family.kid, kid_family.family
+    txns = await investing_service.sell_all(db, kid, family.base_currency)
+    await db.commit()  # see buy() above for why this is needed, not redundant
+    return [InvestmentTransactionOut.model_validate(t, from_attributes=True) for t in txns]
+
+
+@router.get("/lots/{lot_id}", response_model=LotDetailOut)
+async def get_lot_detail(
+    lot_id: uuid.UUID,
+    kid: Kid = Depends(get_kid),
+    db: AsyncSession = Depends(get_db),
+) -> LotDetailOut:
+    data = await investing_service.get_lot_detail(db, kid, lot_id)
+    if data is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Lot not found")
+    return LotDetailOut(**data)

@@ -2,10 +2,14 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useSession } from "next-auth/react";
 import { TickerBadge } from "@/components/ui/ticker-badge";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Money } from "@/components/ui/money";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useFamily } from "@/lib/family-store";
+import { invalidateResource } from "@/lib/use-cached-resource";
+import { api, ApiError } from "@/lib/api";
 import { formatMoney, formatPct, trimUnits } from "@/lib/format";
 import type { AssetOut, PortfolioOut } from "@/lib/types";
 
@@ -45,10 +49,32 @@ export function PortfolioClient({
   holdingsLoading?: boolean;
   catalogLoading?: boolean;
 }) {
+  const { data: session } = useSession();
+  const { refreshHome } = useFamily();
   const [tab, setTab] = useState<"holdings" | "buy">(initialTab);
+  const [sellingAll, setSellingAll] = useState(false);
+  const [sellAllError, setSellAllError] = useState<string | null>(null);
 
   const dayChangePct = formatPct(portfolio.total_day_change_pct);
   const isPositive = Number(portfolio.total_day_change_amount) >= 0;
+
+  async function handleSellEverything() {
+    if (!session?.backendToken) return;
+    if (!confirm(`Sell everything ${portfolio.kid_name} owns? This can't be undone.`)) return;
+    setSellingAll(true);
+    setSellAllError(null);
+    try {
+      await api.post(`/kids/${kidId}/sell-all`, session.backendToken);
+      invalidateResource(`portfolio:${kidId}`);
+      invalidateResource(`debt:${kidId}`);
+      invalidateResource(`investment-transactions:${kidId}`);
+      refreshHome();
+    } catch (e) {
+      setSellAllError(e instanceof ApiError ? e.message : "Something went wrong");
+    } finally {
+      setSellingAll(false);
+    }
+  }
 
   return (
     <div className="max-w-md mx-auto flex flex-col min-h-screen">
@@ -107,16 +133,32 @@ export function PortfolioClient({
               // the catalog/Buy tab shows instead.
               const pct = formatPct(h.since_purchase_pct);
               const positive = Number(h.since_purchase_pct ?? 0) >= 0;
+              // A lot goes to its own detail page (chart since purchase +
+              // sell) — never the Buy screen, which is for buying, not for
+              // viewing/selling something already owned. Only a
+              // pre-lot legacy avg-cost holding (no lot_id) still uses the
+              // Buy page's "you own this" banner, since it has no
+              // dedicated detail page of its own.
+              const href = h.lot_id
+                ? `/home/kids/${kidId}/lots/${h.lot_id}`
+                : `/home/kids/${kidId}/buy/${h.symbol}?from=holdings`;
               return (
                 <Link
-                  key={h.symbol}
-                  href={`/home/kids/${kidId}/buy/${h.symbol}?from=holdings`}
+                  key={h.lot_id ?? h.symbol}
+                  href={href}
                   className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex items-center justify-between"
                 >
                   <div className="flex items-center gap-3">
                     <TickerBadge symbol={h.symbol} />
                     <div>
-                      <div className="font-semibold text-[15px] text-emerald-dark">{h.display_name}</div>
+                      <div className="font-semibold text-[15px] text-emerald-dark">
+                        {h.display_name}
+                        {h.is_boosted && (
+                          <span className="ml-1.5 align-middle text-[10px] font-semibold text-tint-dark bg-tint-emerald rounded-full px-1.5 py-0.5">
+                            Boosted
+                          </span>
+                        )}
+                      </div>
                       <div className="text-[12.5px] text-muted">{trimUnits(h.units)} units</div>
                     </div>
                   </div>
@@ -140,6 +182,20 @@ export function PortfolioClient({
               <p className="text-center text-[13px] text-muted pt-4">
                 No investments yet — switch to Buy to get started.
               </p>
+            )}
+
+            {portfolio.holdings.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  disabled={sellingAll}
+                  onClick={handleSellEverything}
+                  className="mt-1 text-center min-h-11 py-[13px] rounded-xl text-[14px] font-semibold border border-negative text-negative cursor-pointer disabled:opacity-50"
+                >
+                  {sellingAll ? "Selling…" : `Sell everything for ${formatMoney(portfolio.holdings_value, currency)}`}
+                </button>
+                {sellAllError && <p className="text-[13px] text-negative -mt-1">{sellAllError}</p>}
+              </>
             )}
           </>
         ) : catalog.length === 0 && catalogLoading ? (
