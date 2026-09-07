@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from app.core import request_logging
 from app.core.config import get_settings
 from app.core.db import get_db
+from app.core.rate_limit import clear_rate_limit_state
 from app.core.security import issue_session_token
 from app.main import app
 from app.models.catalog import AssetCatalog, AssetKind, PriceCache
@@ -47,8 +48,13 @@ async def db_session():
     # investing_service caches the catalog/price/FX context in-process
     # (see its module docstring) — clear it so one test's seeded data
     # can't leak into another's cached read via a shared process-level
-    # cache that outlives each test's rolled-back transaction.
+    # cache that outlives each test's rolled-back transaction. Same deal
+    # for the client-metrics rate limiter (app/core/rate_limit.py):
+    # httpx's ASGITransport gives every test request the same fake
+    # client address by default, so its per-IP hit counts would
+    # otherwise accumulate across tests instead of resetting per test.
     clear_price_context_cache()
+    clear_rate_limit_state()
 
     engine = create_async_engine(settings.database_url)
     connection = await engine.connect()
@@ -63,6 +69,7 @@ async def db_session():
         await connection.close()
         await engine.dispose()
         clear_price_context_cache()
+        clear_rate_limit_state()
 
 
 @pytest_asyncio.fixture

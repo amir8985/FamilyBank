@@ -68,11 +68,20 @@ async def load_price_context(session: AsyncSession) -> PriceContext:
         if now - cached_at < _PRICE_CONTEXT_TTL_SECONDS:
             return ctx
 
-    catalog_rows = await session.scalars(select(AssetCatalog))
-    catalog = {a.symbol: a for a in catalog_rows}
-
-    price_rows = await session.scalars(select(PriceCache))
-    prices = {p.symbol: p for p in price_rows}
+    # One LEFT JOIN instead of two separate SELECTs — a symbol can exist
+    # in the catalog with no PriceCache row yet (just added, scheduler
+    # hasn't run), hence the outer join rather than an inner one. Each
+    # round-trip to Neon costs ~300-450ms in production (see the
+    # observability-logging investigation), so cutting a query here isn't
+    # just tidiness — on a cold cache (TTL expiry or a scheduler refresh)
+    # this is on the critical path of nearly every read endpoint in the app.
+    catalog: dict[str, AssetCatalog] = {}
+    prices: dict[str, PriceCache] = {}
+    rows = await session.execute(select(AssetCatalog, PriceCache).outerjoin(PriceCache, PriceCache.symbol == AssetCatalog.symbol))
+    for asset, price in rows:
+        catalog[asset.symbol] = asset
+        if price is not None:
+            prices[asset.symbol] = price
 
     rates = await fx_service.load_all_rates(session)
 
@@ -403,19 +412,23 @@ def list_catalog(ctx: PriceContext, family_currency: str) -> list[dict]:
 
 
 async def get_asset_detail(session: AsyncSession, symbol: str, family_currency: str) -> dict | None:
-    asset = await session.get(AssetCatalog, symbol)
+    # Was 3 raw per-symbol queries (asset, price, FX rate) — the one read
+    # path in this module that got missed when list_catalog/get_portfolio/
+    # get_family_home were batched onto load_price_context (see module
+    # docstring). Same global, scheduler-refreshed cache every other read
+    # path already uses; nothing here is per-family, so there's no reason
+    # this endpoint should pay its own network round-trips for it.
+    ctx = await load_price_context(session)
+    asset = ctx.catalog.get(symbol)
     if asset is None:
         return None
-    price = await session.get(PriceCache, symbol)
+    price = ctx.prices.get(symbol)
     price_family = None
     day_change_pct = None
     history: list[dict] = []
     price_updated_at = None
     if price is not None:
-        try:
-            price_family = await fx_service.convert(session, price.price, price.currency, family_currency)
-        except ValueError:
-            price_family = None
+        price_family = fx_service.convert_from_table(ctx.rates, price.price, price.currency, family_currency)
         day_change_pct = _day_change(price)
         history = price.history_json or []
         price_updated_at = price.updated_at

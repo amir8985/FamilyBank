@@ -4,20 +4,24 @@ per-family, never per-request (spec 4.3).
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import httpx
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.currencies import SUPPORTED_CURRENCIES
 from app.core.db import SessionLocal
 from app.models.catalog import AssetCatalog, PriceCache
+from app.models.request_log import RequestLog
 from app.services import fx_service
 from app.services.investing_service import clear_price_context_cache
 from app.services.price_client import PriceFetchError, fetch_quote
+
+settings = get_settings()
 
 logger = logging.getLogger("familybank.scheduler")
 
@@ -112,9 +116,28 @@ async def run_refresh() -> None:
     # rather than waiting out the safety-net TTL (investing_service.py).
     clear_price_context_cache()
 
+    deleted = await cleanup_old_request_logs()
+
     logger.info(
-        "Scheduler refresh complete: %d symbols, %d FX pairs, at %s",
+        "Scheduler refresh complete: %d symbols, %d FX pairs, %d old request_logs rows pruned, at %s",
         len(symbols),
         len(pairs),
+        deleted,
         datetime.now(timezone.utc),
     )
+
+
+async def cleanup_old_request_logs() -> int:
+    """Prunes request_logs rows older than settings.request_log_retention_days
+    — nothing else ever deletes from this table (see the setting's own
+    docstring for why that's a problem at real traffic volumes). Piggybacks
+    on the price/FX refresh cadence (called from run_refresh) rather than
+    needing its own schedule; a plain indexed DELETE (created_at has its
+    own index — see RequestLog.__table_args__) is cheap enough not to
+    warrant one. Returns the number of rows deleted, for the log line.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=settings.request_log_retention_days)
+    async with SessionLocal() as session:
+        result = await session.execute(delete(RequestLog).where(RequestLog.created_at < cutoff))
+        await session.commit()
+        return result.rowcount or 0

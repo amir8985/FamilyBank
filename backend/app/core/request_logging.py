@@ -99,7 +99,7 @@ class RequestLoggingMiddleware:
             return
 
         start = time.perf_counter()
-        query_timing.start_tracking()
+        query_timing.start_tracking(start)
         status_holder: dict[str, int | None] = {"code": None}
 
         async def send_wrapper(message: dict) -> None:
@@ -141,12 +141,24 @@ class RequestLoggingMiddleware:
                 "user_id": user_id,
                 "error": error,
             }
-            # db_query_count/db_time_ms are diagnostic-only (stdout, not
-            # persisted — request_logs has no columns for them) — the gap
-            # between duration_ms and db_time_ms is time spent NOT running
-            # a query: Python processing, external calls, or waiting for a
-            # connection to free up.
-            db_query_count, db_time_ms = query_timing.get_query_stats()
-            log_line = {**entry, "db_query_count": db_query_count, "db_time_ms": round(db_time_ms, 1)}
+            # db_query_count/db_time_ms/time_to_first_query_ms are
+            # diagnostic-only (stdout, not persisted — request_logs has no
+            # columns for them) — the gap between duration_ms and
+            # db_time_ms is time spent NOT running a query: Python
+            # processing, external calls, or waiting for a connection to
+            # free up. time_to_first_query_ms narrows that down further:
+            # it's specifically the time before the *first* query even
+            # started, which is where a connection-pool checkout (or a
+            # brand-new physical connection's full handshake) would show
+            # up — see query_timing.py.
+            db_query_count, db_time_ms, time_to_first_query_ms = query_timing.get_query_stats()
+            log_line = {
+                **entry,
+                "db_query_count": db_query_count,
+                "db_time_ms": round(db_time_ms, 1),
+                "time_to_first_query_ms": (
+                    round(time_to_first_query_ms, 1) if time_to_first_query_ms is not None else None
+                ),
+            }
             logger.info(json.dumps(log_line, default=str))
             spawn_persist_request_log(entry)

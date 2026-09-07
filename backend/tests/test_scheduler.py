@@ -18,13 +18,33 @@ from decimal import Decimal
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import delete
+import pytest_asyncio
+from sqlalchemy import delete, select
 
-from app.core.db import SessionLocal
+from app.core.db import SessionLocal, engine
 from app.models.catalog import AssetCatalog, AssetKind, PriceCache
+from app.models.request_log import RequestLog
 from app.scheduler import jobs, loop
 
 _TEST_SYMBOL = "__SCHEDULER_TEST__"
+_TEST_PATH = "/__scheduler_cleanup_test__"
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _dispose_module_engine_pool():
+    # app.core.db.engine (what SessionLocal is bound to) is a process-wide
+    # singleton, but pytest-asyncio gives every test function its own
+    # event loop, and an asyncpg connection is tied to the loop that
+    # created it. Without this, a connection this file's tests pool (via
+    # a direct `SessionLocal()` — see the module docstring) can get
+    # handed back out to a *later* test's different loop and blow up with
+    # "RuntimeError: Event loop is closed" on its first use — not a bug
+    # in whichever test happens to draw the stale connection, so disposing
+    # before and after each test (forcing a fresh, current-loop connection)
+    # fixes it regardless of run order rather than papering over one test.
+    await engine.dispose()
+    yield
+    await engine.dispose()
 
 
 class _StopLoop(Exception):
@@ -106,3 +126,35 @@ async def test_run_forever_runs_immediately_when_never_refreshed(monkeypatch):
 
     run_refresh_mock.assert_called_once()
     assert sleep_calls == [loop.settings.scheduler_interval_hours * 3600]
+
+
+async def test_cleanup_old_request_logs_prunes_only_rows_past_retention():
+    now = datetime.now(timezone.utc)
+    old_row_id = None
+    recent_row_id = None
+    async with SessionLocal() as session:
+        old_row = RequestLog(
+            method="GET",
+            path=_TEST_PATH,
+            duration_ms=1.0,
+            created_at=now - timedelta(days=jobs.settings.request_log_retention_days + 1),
+        )
+        recent_row = RequestLog(method="GET", path=_TEST_PATH, duration_ms=1.0, created_at=now)
+        session.add_all([old_row, recent_row])
+        await session.commit()
+        old_row_id, recent_row_id = old_row.id, recent_row.id
+
+    try:
+        deleted = await jobs.cleanup_old_request_logs()
+        assert deleted >= 1
+
+        async with SessionLocal() as session:
+            remaining_ids = set(
+                (await session.scalars(select(RequestLog.id).where(RequestLog.path == _TEST_PATH))).all()
+            )
+        assert old_row_id not in remaining_ids
+        assert recent_row_id in remaining_ids
+    finally:
+        async with SessionLocal() as session:
+            await session.execute(delete(RequestLog).where(RequestLog.path == _TEST_PATH))
+            await session.commit()

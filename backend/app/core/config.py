@@ -40,6 +40,16 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True
     scheduler_interval_hours: float = 5.0
 
+    # request_logs has no other retention mechanism — every backend
+    # request and every client-reported metric writes a row (see
+    # app/core/request_logging.py), and nothing ever deletes one. Fine at
+    # today's traffic; at real scale (thousands of users) this table
+    # grows forever, which costs real Neon storage and eventually slows
+    # down the very diagnostic queries it exists to make possible. The
+    # scheduler prunes rows older than this on every refresh cycle (see
+    # app/scheduler/jobs.cleanup_old_request_logs).
+    request_log_retention_days: int = 30
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

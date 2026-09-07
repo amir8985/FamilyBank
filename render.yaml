@@ -5,7 +5,21 @@ services:
     rootDir: backend
     plan: free
     buildCommand: pip install -r requirements.txt && alembic upgrade head
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    # request.client.host (used by the per-IP rate limit on
+    # /internal/client-metrics — see app/core/rate_limit.py) needs to see
+    # the real visitor, not Render's own edge proxy, which always sits in
+    # front. --proxy-headers alone doesn't get there: it's already
+    # uvicorn's default, and the flag that actually matters —
+    # --forwarded-allow-ips — defaults to "127.0.0.1" ("trust
+    # X-Forwarded-For only from a proxy connecting via loopback"). Render's
+    # edge proxy reaches this container over the network, not 127.0.0.1,
+    # so left at the default, request.client.host would have kept reading
+    # as the proxy's own address for every request — one shared rate-limit
+    # bucket for every real visitor, with no error to surface it.
+    # --forwarded-allow-ips='*' trusts the header from any immediate peer,
+    # which is safe specifically because Render's proxy is the only thing
+    # that can open a direct connection to this process at all.
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
     healthCheckPath: /health
     envVars:
       # Set these in the Render dashboard after the first deploy — never

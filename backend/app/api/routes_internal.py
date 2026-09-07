@@ -2,7 +2,7 @@ import json
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_family
 from app.core.config import get_settings
 from app.core.db import get_db
+from app.core.rate_limit import is_rate_limited, record_hit
 from app.core.request_logging import spawn_persist_request_log
 from app.core.security import AuthContext, get_current_auth_optional
 from app.models.family import Family
@@ -67,6 +68,7 @@ async def dev_reset(
 
 @router.post("/client-metrics")
 async def report_client_metric(
+    request: Request,
     payload: ClientMetricIn,
     auth: AuthContext | None = Depends(get_current_auth_optional),
 ) -> dict:
@@ -75,7 +77,20 @@ async def report_client_metric(
     so slow-client vs. slow-server can actually be told apart. Auth is
     optional: a metric from a signed-out screen (e.g. the sign-in page
     itself) is still worth logging, just without a family/user attached.
+
+    Rate-limited per IP (see app/core/rate_limit.py) — this is the one
+    endpoint with no auth requirement and no shared secret, so it's
+    reachable by anyone; without a cap, a flood of POSTs here grows
+    request_logs and costs real Neon storage/compute for nothing.
+    Silently drops the excess (200, not logged) rather than 429ing —
+    this is best-effort telemetry, not a contract the frontend needs to
+    handle a failure response for.
     """
+    client_ip = request.client.host if request.client else "unknown"
+    if is_rate_limited(client_ip):
+        return {"status": "ok"}
+    record_hit(client_ip)
+
     entry = {
         "request_id": uuid.uuid4(),
         "source": "client",

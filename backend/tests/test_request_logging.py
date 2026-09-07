@@ -133,6 +133,35 @@ async def test_client_metrics_endpoint_works_without_auth(client):
     assert resp.status_code == 200
 
 
+async def test_client_metrics_endpoint_stops_logging_past_the_per_ip_limit(client, caplog):
+    # httpx's ASGITransport gives every call in this test the same fake
+    # client address (see rate_limit.clear_rate_limit_state's docstring),
+    # so this exercises the real per-IP bucket end to end.
+    from app.core.rate_limit import _MAX_REQUESTS_PER_WINDOW
+
+    with caplog.at_level(logging.INFO, logger="app.requests"):
+        for _ in range(_MAX_REQUESTS_PER_WINDOW):
+            resp = await client.post(
+                "/internal/client-metrics", json={"path": "/home", "duration_ms": 1.0}
+            )
+            assert resp.status_code == 200
+
+        # One more over the limit: still 200 (best-effort telemetry, not
+        # a contract the frontend needs to handle a failure for — see
+        # the route's docstring) but silently dropped, not logged.
+        resp = await client.post(
+            "/internal/client-metrics", json={"path": "/home", "duration_ms": 1.0}
+        )
+        assert resp.status_code == 200
+
+    client_payloads = [
+        json.loads(r.getMessage())
+        for r in caplog.records
+        if r.name == "app.requests" and json.loads(r.getMessage())["source"] == "client"
+    ]
+    assert len(client_payloads) == _MAX_REQUESTS_PER_WINDOW
+
+
 async def test_request_log_row_is_writable(db_session, family):
     row = RequestLog(
         request_id=uuid.uuid4(),
