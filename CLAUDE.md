@@ -219,6 +219,22 @@ Rate is a monthly percentage, compounded daily on read.
   lock for a locked plan — the confirm copy says so). Copy on the
   per-plan badge + hub badge updated to say the parent *can* cash it out
   from settings again, alongside the kid's own withdrawal.
+- **Eighth round (frontend only):**
+  - Hub savings cards now show up to two status pills: a **brass
+    "Deactivated"** (kind has plans but none switched on) and a
+    **red "N still growing"** (leftover deposits in a switched-off plan)
+    — the "still growing" one moved from brass to red
+    (`tint-negative`/`negative`) so it reads as more urgent than plain
+    "Deactivated". Both tap to explain. `hub-still-growing.tsx` →
+    `hub-savings-badges.tsx` (`HubDeactivatedBadge` +
+    `HubStillGrowingBadge`). The per-plan `PlanDepositMarker`'s
+    inactive "N still saving" pill went red to match.
+  - **The post-save leftovers sheet now only fires for a plan *this
+    save* switched off** that has deposits — `turnedOffWithDeposits()`
+    computed from staged-vs-server before applying, replacing the old
+    "re-scan every off-with-deposits plan" (`loadLeftovers`). Turning a
+    *different* plan on and saving no longer pops an alert about a
+    pre-existing switched-off plan.
 - **Deferred, still**: "interest from parent" as a *separate* flat
   cash-balance rate — this savings-plans feature is the more general
   version of that idea, so it may now be moot; confirm with the user

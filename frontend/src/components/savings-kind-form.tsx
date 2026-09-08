@@ -94,25 +94,44 @@ export function SavingsKindForm({
     }
   }
 
-  async function loadLeftovers(): Promise<LeftoverPlan[]> {
-    if (!token) return [];
-    const fresh = await api.get<SavingsPlanOut[]>("/family/savings-plans", token);
-    const off = fresh.filter((p) => inKind(p) && !p.is_active && p.open_deposit_count > 0);
-    return Promise.all(
-      off.map(async (plan) => ({
-        plan,
-        deposits: await api.get<PlanDepositOut[]>(`/family/savings-plans/${plan.id}/deposits`, token),
-      })),
-    );
+  // Plans this pending save switches OFF (vs. the server) that still
+  // hold a deposit — the only thing worth prompting about after a save.
+  // A plan that was already off before this save is *not* included, so
+  // saving an unrelated change (e.g. turning a different plan on) never
+  // pops the leftovers sheet.
+  function turnedOffWithDeposits(): SavingsPlanOut[] {
+    const out: SavingsPlanOut[] = [];
+    for (const preset of kindPresets) {
+      const existing = plans.find((p) => p.preset_key === preset.key);
+      if (existing?.is_active && !presetOn(preset.key) && existing.open_deposit_count > 0) {
+        out.push(existing);
+      }
+    }
+    for (const plan of customPlans) {
+      if (plan.is_active && !customOn(plan.id) && plan.open_deposit_count > 0) out.push(plan);
+    }
+    return out;
   }
 
   async function handleSave() {
     if (!token) return;
+    const affected = turnedOffWithDeposits();
     setSaving(true);
     setError(null);
     try {
       await applyToggles();
-      const left = await loadLeftovers();
+      const left: LeftoverPlan[] =
+        affected.length === 0
+          ? []
+          : await Promise.all(
+              affected.map(async (plan) => ({
+                plan,
+                deposits: await api.get<PlanDepositOut[]>(
+                  `/family/savings-plans/${plan.id}/deposits`,
+                  token,
+                ),
+              })),
+            );
       setOverride({});
       router.refresh();
       if (left.length > 0) setLeftovers(left);

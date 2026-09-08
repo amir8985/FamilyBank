@@ -37,12 +37,12 @@ export function PlanDepositMarker({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="text-[10px] font-semibold text-brass-dark bg-tint-brass rounded-full px-1.5 py-0.5 cursor-pointer"
+        className="text-[10px] font-semibold text-negative bg-tint-negative rounded-full px-1.5 py-0.5 cursor-pointer"
       >
         {count} still saving
       </button>
       {open && (
-        <span className="text-[11.5px] text-brass-dark leading-relaxed bg-tint-brass/50 rounded-lg px-2.5 py-1.5 max-w-[280px]">
+        <span className="text-[11.5px] text-negative leading-relaxed bg-tint-negative/60 rounded-lg px-2.5 py-1.5 max-w-[280px]">
           This plan is off, so no new money can go in — but {count} {noun} already in it{" "}
           {count === 1 ? "keeps" : "keep"} earning {Number(rate).toFixed(1)}%/month. Cash {them} out
           with the button, or your kid can withdraw {them} from their savings screen
