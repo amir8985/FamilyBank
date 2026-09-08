@@ -5,7 +5,7 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
 import { ConfirmSheet } from "@/components/ui/confirm-sheet";
-import { StillGrowingBadge } from "@/components/ui/still-growing-badge";
+import { PlanDepositMarker } from "@/components/ui/plan-deposit-marker";
 import { SavingsLeftoversSheet, type LeftoverPlan } from "@/components/savings-leftovers-sheet";
 import { annualFromMonthly } from "@/lib/format";
 import type { PlanDepositOut, SavingsPlanOut, SavingsPresetOut } from "@/lib/types";
@@ -182,9 +182,14 @@ export function SavingsKindForm({
     }
   }
 
-  const badgeFor = (plan: SavingsPlanOut | undefined, on: boolean) =>
-    plan && !on && plan.open_deposit_count > 0 ? (
-      <StillGrowingBadge count={plan.open_deposit_count} rate={String(plan.monthly_rate)} />
+  const markerFor = (plan: SavingsPlanOut | undefined) =>
+    plan && plan.open_deposit_count > 0 ? (
+      <PlanDepositMarker
+        count={plan.open_deposit_count}
+        active={plan.is_active}
+        locked={plan.lock_months > 0}
+        rate={String(plan.monthly_rate)}
+      />
     ) : null;
 
   return (
@@ -252,7 +257,7 @@ export function SavingsKindForm({
                     className="w-5 h-5 accent-emerald cursor-pointer shrink-0"
                   />
                 </label>
-                {badgeFor(existing, on)}
+                {markerFor(existing)}
               </div>
             );
           })}
@@ -285,7 +290,7 @@ export function SavingsKindForm({
                       className="w-5 h-5 accent-emerald cursor-pointer shrink-0"
                     />
                   </label>
-                  {badgeFor(plan, on)}
+                  {markerFor(plan)}
                   <button
                     type="button"
                     onClick={() => setDeleteTarget(plan)}

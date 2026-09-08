@@ -3,9 +3,13 @@
 import { useState } from "react";
 
 /** The hub card's orange "Savings still growing" pill — tap to reveal a
- * one-liner, same idea as StillGrowingBadge on the settings page. */
+ * one-liner. In this state (no plan of this kind switched on) there's no
+ * way to redeem the leftover deposits from Settings — that's the kid's
+ * move from their own savings screen, and a locked one only once its
+ * term is up. */
 export function HubStillGrowingBadge({ count, kind }: { count: number; kind: "flexible" | "locked" }) {
   const [open, setOpen] = useState(false);
+  const noun = count === 1 ? "deposit" : "deposits";
   return (
     <span className="flex flex-col items-start gap-1">
       <button
@@ -20,9 +24,11 @@ export function HubStillGrowingBadge({ count, kind }: { count: number; kind: "fl
       </button>
       {open && (
         <span className="text-[11.5px] text-brass-dark leading-relaxed bg-tint-brass/50 rounded-lg px-2.5 py-1.5">
-          No {kind} plan is switched on for new deposits, but {count} deposit{count === 1 ? "" : "s"}{" "}
-          from before {count === 1 ? "is" : "are"} still earning interest. Open the settings to cash{" "}
-          {count === 1 ? "it" : "them"} out or switch a plan back on.
+          No {kind} plan is switched on for new deposits, but {count} {noun} from before{" "}
+          {count === 1 ? "is" : "are"} still earning interest.{" "}
+          {kind === "locked"
+            ? `Your kid can withdraw ${count === 1 ? "it" : "them"} from their savings screen once the lock term is up.`
+            : `Your kid can withdraw ${count === 1 ? "it" : "them"} any time from their savings screen.`}
         </span>
       )}
     </span>

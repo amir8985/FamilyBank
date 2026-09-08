@@ -198,6 +198,18 @@ Rate is a monthly percentage, compounded daily on read.
   - The hub's orange **"Savings still growing"** pill is now a tappable
     `HubStillGrowingBadge` — tap reveals a one-liner, same pattern as
     the boost badge / the per-plan `StillGrowingBadge`.
+- **Sixth round (frontend only):**
+  - **Every** plan card in the kind settings pages now shows a
+    deposit-count marker when it has open deposits — `PlanDepositMarker`
+    (renamed/generalised from `StillGrowingBadge`): a plain emerald
+    "N deposits" pill for an active plan, the orange tap-to-explain
+    "N still saving" for a switched-off one.
+  - Fixed the "still growing" copy (both the per-plan badge and the
+    hub's `HubStillGrowingBadge`): a leftover deposit is redeemed by the
+    **kid from their own savings screen**, not from Settings — and a
+    **locked** one only once its term is up. (The post-save
+    `SavingsLeftoversSheet` is the only place Settings can act on one,
+    and only in that moment.)
 - **Deferred, still**: "interest from parent" as a *separate* flat
   cash-balance rate — this savings-plans feature is the more general
   version of that idea, so it may now be moot; confirm with the user
