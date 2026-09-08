@@ -210,6 +210,15 @@ Rate is a monthly percentage, compounded daily on read.
     **locked** one only once its term is up. (The post-save
     `SavingsLeftoversSheet` is the only place Settings can act on one,
     and only in that moment.)
+- **Seventh round (frontend only) — user reversed the round-6 stance:**
+  a switched-off plan card that still has deposits now shows a small
+  outlined **"Cash out"** button next to its "N still saving" marker.
+  Tapping it fetches the per-kid breakdown and opens an amber
+  `ConfirmSheet` ("Cash out '<name>'?" → "Cash out now"), which calls
+  the existing `POST /family/savings-plans/{id}/cash-out` (overrides the
+  lock for a locked plan — the confirm copy says so). Copy on the
+  per-plan badge + hub badge updated to say the parent *can* cash it out
+  from settings again, alongside the kid's own withdrawal.
 - **Deferred, still**: "interest from parent" as a *separate* flat
   cash-balance rate — this savings-plans feature is the more general
   version of that idea, so it may now be moot; confirm with the user

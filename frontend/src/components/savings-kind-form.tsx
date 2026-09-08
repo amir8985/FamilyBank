@@ -7,7 +7,7 @@ import { api, ApiError } from "@/lib/api";
 import { ConfirmSheet } from "@/components/ui/confirm-sheet";
 import { PlanDepositMarker } from "@/components/ui/plan-deposit-marker";
 import { SavingsLeftoversSheet, type LeftoverPlan } from "@/components/savings-leftovers-sheet";
-import { annualFromMonthly } from "@/lib/format";
+import { annualFromMonthly, formatMoney } from "@/lib/format";
 import type { PlanDepositOut, SavingsPlanOut, SavingsPresetOut } from "@/lib/types";
 
 type Kind = "flexible" | "locked";
@@ -69,6 +69,7 @@ export function SavingsKindForm({
   const [deleteTarget, setDeleteTarget] = useState<SavingsPlanOut | null>(null);
   const [leftovers, setLeftovers] = useState<LeftoverPlan[] | null>(null);
   const [leftoverBusy, setLeftoverBusy] = useState<string | null>(null);
+  const [cashOutTarget, setCashOutTarget] = useState<LeftoverPlan | null>(null);
 
   function stagePreset(key: string, on: boolean) {
     setOverride((o) => ({ ...o, [`preset:${key}`]: on }));
@@ -182,15 +183,57 @@ export function SavingsKindForm({
     }
   }
 
-  const markerFor = (plan: SavingsPlanOut | undefined) =>
-    plan && plan.open_deposit_count > 0 ? (
-      <PlanDepositMarker
-        count={plan.open_deposit_count}
-        active={plan.is_active}
-        locked={plan.lock_months > 0}
-        rate={String(plan.monthly_rate)}
-      />
-    ) : null;
+  async function openCashOut(plan: SavingsPlanOut) {
+    if (!token) return;
+    setError(null);
+    try {
+      const deposits = await api.get<PlanDepositOut[]>(
+        `/family/savings-plans/${plan.id}/deposits`,
+        token,
+      );
+      setCashOutTarget({ plan, deposits });
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Something went wrong");
+    }
+  }
+
+  async function confirmCashOut() {
+    if (!token || !cashOutTarget) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await api.post(`/family/savings-plans/${cashOutTarget.plan.id}/cash-out`, token);
+      setCashOutTarget(null);
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Something went wrong");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const planExtras = (plan: SavingsPlanOut | undefined) => {
+    if (!plan || plan.open_deposit_count === 0) return null;
+    return (
+      <div className="flex flex-wrap items-start gap-2">
+        <PlanDepositMarker
+          count={plan.open_deposit_count}
+          active={plan.is_active}
+          locked={plan.lock_months > 0}
+          rate={String(plan.monthly_rate)}
+        />
+        {!plan.is_active && (
+          <button
+            type="button"
+            onClick={() => openCashOut(plan)}
+            className="text-[10px] font-semibold text-brass-dark border border-brass-dark rounded-full px-2 py-0.5 cursor-pointer"
+          >
+            Cash out
+          </button>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="flex flex-col">
@@ -257,7 +300,7 @@ export function SavingsKindForm({
                     className="w-5 h-5 accent-emerald cursor-pointer shrink-0"
                   />
                 </label>
-                {markerFor(existing)}
+                {planExtras(existing)}
               </div>
             );
           })}
@@ -290,7 +333,7 @@ export function SavingsKindForm({
                       className="w-5 h-5 accent-emerald cursor-pointer shrink-0"
                     />
                   </label>
-                  {markerFor(plan)}
+                  {planExtras(plan)}
                   <button
                     type="button"
                     onClick={() => setDeleteTarget(plan)}
@@ -411,6 +454,33 @@ export function SavingsKindForm({
           onClose={() => setLeftovers(null)}
           onCashOut={(plan) => resolveLeftover(plan, "cash-out")}
           onReopen={(plan) => resolveLeftover(plan, "reopen")}
+        />
+      )}
+
+      {cashOutTarget && (
+        <ConfirmSheet
+          title={`Cash out "${cashOutTarget.plan.name}"?`}
+          confirmLabel="Cash out now"
+          confirming={saving}
+          onConfirm={confirmCashOut}
+          onClose={() => setCashOutTarget(null)}
+          body={
+            <span className="flex flex-col gap-2">
+              <span>
+                {cashOutTarget.plan.lock_months > 0
+                  ? "Closes every deposit in this plan now — even ones whose lock term isn't up — and pays each back to your kid's cash, interest included."
+                  : "Closes every deposit in this plan now and pays each back to your kid's cash, interest included."}
+              </span>
+              <span className="flex flex-col gap-0.5">
+                {cashOutTarget.deposits.map((d) => (
+                  <span key={d.kid_id} className="flex justify-between text-[12.5px]">
+                    <span>{d.kid_name}</span>
+                    <span className="font-semibold">{formatMoney(d.current_value, d.currency)}</span>
+                  </span>
+                ))}
+              </span>
+            </span>
+          }
         />
       )}
     </div>
