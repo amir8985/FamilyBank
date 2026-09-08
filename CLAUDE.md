@@ -235,6 +235,14 @@ Rate is a monthly percentage, compounded daily on read.
     "re-scan every off-with-deposits plan" (`loadLeftovers`). Turning a
     *different* plan on and saving no longer pops an alert about a
     pre-existing switched-off plan.
+- **Ninth round — React duplicate-key bug fix:**
+  `savings_service.plan_deposit_breakdown` returned one row *per open
+  deposit*, so a kid with two deposits in the same plan produced two
+  rows with the same `kid_id` → "Encountered two children with the same
+  key" in `SavingsLeftoversSheet` / the cash-out ConfirmSheet (both key
+  by `d.kid_id`). Now aggregates per kid (values summed, one row). No
+  API-shape change; new test
+  `test_plan_deposits_breakdown_sums_a_kids_multiple_deposits_into_one_row`.
 - **Deferred, still**: "interest from parent" as a *separate* flat
   cash-balance rate — this savings-plans feature is the more general
   version of that idea, so it may now be moot; confirm with the user

@@ -375,8 +375,9 @@ async def _plan_open_deposits(session: AsyncSession, plan_id: uuid.UUID) -> list
 async def plan_deposit_breakdown(
     session: AsyncSession, plan: SavingsPlan, family_currency: str
 ) -> list[dict]:
-    """Per-kid list of who still has money in a plan — powers the
-    confirmation the parent sees before switching a plan off."""
+    """One row per kid who still has money in a plan (their deposits in
+    it summed) — powers the parent's cash-out / switch-off confirmation.
+    A kid with two deposits in the same plan is one row, not two."""
     now = datetime.now(timezone.utc)
     deposits = await _plan_open_deposits(session, plan.id)
     if not deposits:
@@ -388,21 +389,27 @@ async def plan_deposit_breakdown(
         )
     }
     rates = await fx_service.load_all_rates(session)
-    out = []
+    by_kid: dict[uuid.UUID, dict] = {}
     for d in deposits:
         native = deposit_value(d, now)
-        value = fx_service.convert_from_table(rates, native, d.currency, family_currency)
-        out.append(
-            {
+        converted = fx_service.convert_from_table(rates, native, d.currency, family_currency)
+        value = converted if converted is not None else native
+        row = by_kid.get(d.kid_id)
+        if row is None:
+            row = {
                 "kid_id": d.kid_id,
                 "kid_name": names.get(d.kid_id, "?"),
-                "current_value": (value if value is not None else native).quantize(_CENTS, rounding=ROUND_HALF_UP),
-                "currency": family_currency if value is not None else d.currency,
+                "current_value": Decimal("0"),
+                "currency": family_currency if converted is not None else d.currency,
                 "is_locked": d.lock_months > 0,
-                "is_matured": is_matured(d, now),
+                "is_matured": True,
             }
-        )
-    return out
+            by_kid[d.kid_id] = row
+        row["current_value"] += value
+        row["is_matured"] = row["is_matured"] and is_matured(d, now)
+    for row in by_kid.values():
+        row["current_value"] = row["current_value"].quantize(_CENTS, rounding=ROUND_HALF_UP)
+    return list(by_kid.values())
 
 
 async def cash_out_plan(session: AsyncSession, plan: SavingsPlan, family_currency: str) -> dict:

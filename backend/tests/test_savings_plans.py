@@ -244,6 +244,26 @@ async def test_plan_deposits_breakdown_lists_each_kid(client, auth_headers, fami
     assert all(Decimal(r["current_value"]) >= Decimal("50") for r in rows)
 
 
+async def test_plan_deposits_breakdown_sums_a_kids_multiple_deposits_into_one_row(
+    client, auth_headers, family, db_session
+):
+    kid = await _kid(db_session, family)
+    await debts_db_service.record_transaction(db_session, kid.id, DebtTransactionType.ADD, Decimal("200"))
+    await db_session.commit()
+    plan_id = (
+        await client.post(
+            "/family/savings-plans", headers=auth_headers, json={"name": "F", "monthly_rate": 1.0, "lock_months": 0}
+        )
+    ).json()["id"]
+    await client.post(f"/kids/{kid.id}/savings/deposit", headers=auth_headers, json={"plan_id": plan_id, "amount": 30})
+    await client.post(f"/kids/{kid.id}/savings/deposit", headers=auth_headers, json={"plan_id": plan_id, "amount": 45})
+
+    rows = (await client.get(f"/family/savings-plans/{plan_id}/deposits", headers=auth_headers)).json()
+    assert len(rows) == 1
+    assert rows[0]["kid_name"] == "Kid"
+    assert Decimal(rows[0]["current_value"]) >= Decimal("75")
+
+
 async def test_cash_out_plan_closes_every_deposit_in_it_across_kids(client, auth_headers, family, db_session):
     a = await _kid(db_session, family, "A")
     b = await _kid(db_session, family, "B")
