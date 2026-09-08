@@ -243,6 +243,11 @@ Rate is a monthly percentage, compounded daily on read.
   by `d.kid_id`). Now aggregates per kid (values summed, one row). No
   API-shape change; new test
   `test_plan_deposits_breakdown_sums_a_kids_multiple_deposits_into_one_row`.
+- **Tenth round:** the hub "Deactivated" pill was gated on
+  `hasAnyPlan` (kind has ≥1 plan row), so a family with **zero** plans
+  of that kind saw no badge at all. Now it shows whenever the kind
+  isn't active — you can always switch a recommended preset on, so
+  "Deactivated" is the right read even with nothing configured.
 - **Deferred, still**: "interest from parent" as a *separate* flat
   cash-balance rate — this savings-plans feature is the more general
   version of that idea, so it may now be moot; confirm with the user

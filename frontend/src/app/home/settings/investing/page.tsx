@@ -20,7 +20,6 @@ export default async function InvestingSettingsPage() {
     const kindPlans = plans.filter((p) => isKind(p.lock_months));
     return {
       active: kindPlans.some((p) => p.is_active),
-      hasAnyPlan: kindPlans.length > 0,
       growingCount: kindPlans
         .filter((p) => !p.is_active)
         .reduce((n, p) => n + p.open_deposit_count, 0),
@@ -84,12 +83,12 @@ function SavingsCard({
 }: {
   title: string;
   kind: "flexible" | "locked";
-  state: { active: boolean; hasAnyPlan: boolean; growingCount: number };
+  state: { active: boolean; growingCount: number };
   blurb: string;
   href: string;
   cta: string;
 }) {
-  const { active, hasAnyPlan, growingCount } = state;
+  const { active, growingCount } = state;
   return (
     <div className="flex flex-col gap-2.5 bg-card rounded-2xl px-4 py-4 border border-border-hairline">
       <div className="flex flex-col gap-1.5">
@@ -101,7 +100,7 @@ function SavingsCard({
             </span>
           )}
         </div>
-        {!active && hasAnyPlan && <HubDeactivatedBadge kind={kind} />}
+        {!active && <HubDeactivatedBadge kind={kind} />}
         {!active && growingCount > 0 && <HubStillGrowingBadge count={growingCount} kind={kind} />}
       </div>
       <p className="text-[13.5px] text-muted leading-relaxed">{blurb}</p>
