@@ -9,6 +9,8 @@ import { PageHeader } from "@/components/ui/page-header";
 import { SellSheet } from "@/components/sell-sheet";
 import { BoostedBadge, BoostedExplanation } from "@/components/ui/boosted-badge";
 import { Money } from "@/components/ui/money";
+import { useFamily } from "@/lib/family-store";
+import { invalidateKid } from "@/lib/use-cached-resource";
 import { api, ApiError } from "@/lib/api";
 import { currencySymbol, defaultUnitStep, formatMoney, formatPct, formatUpdatedAt, trimUnits } from "@/lib/format";
 import type { AssetDetailOut, BuySellQuoteResponse, HoldingOut, InvestmentTransactionOut } from "@/lib/types";
@@ -53,6 +55,7 @@ export function BuyFormClient({
 }) {
   const { data: session } = useSession();
   const router = useRouter();
+  const { refreshHome } = useFamily();
   const [badgeOpen, setBadgeOpen] = useState(false);
 
   // A "nice" starting quantity so the first thing a kid sees costs
@@ -116,8 +119,11 @@ export function BuyFormClient({
         symbol: asset.symbol,
         units: quote.units,
       });
+      // Drop the now-stale cached views so the destination screen
+      // refetches, and reconcile the home store's cash/portfolio totals.
+      invalidateKid(kidId);
+      refreshHome();
       router.push(`/home/kids/${kidId}`);
-      router.refresh();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Something went wrong");
     } finally {

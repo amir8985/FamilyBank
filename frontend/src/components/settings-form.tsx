@@ -2,43 +2,46 @@
 
 import { useState } from "react";
 import { signOut, useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Avatar } from "@/components/ui/avatar";
 import { AddKidSheet } from "@/components/add-kid-sheet";
 import { CurrencyChangeSheet } from "@/components/currency-change-sheet";
+import { useFamily, resetClientCaches } from "@/lib/family-store";
+import { useToast } from "@/components/ui/toast";
 import { api, ApiError } from "@/lib/api";
 import { SUPPORTED_CURRENCIES } from "@/lib/currencies";
 import type { KidSummary } from "@/lib/types";
 
-export function SettingsForm({
-  currentCurrency,
-  kids,
-}: {
-  currentCurrency: string;
-  kids: KidSummary[];
-}) {
+export function SettingsForm() {
   const { data: session } = useSession();
-  const router = useRouter();
+  const { home, removeKidOptimistic, refreshHome } = useFamily();
+  const toast = useToast();
+  const currentCurrency = home.base_currency;
+  const kids = home.kids;
+
   const [currency, setCurrency] = useState(currentCurrency);
   const [changeTarget, setChangeTarget] = useState<string | null>(null);
   const [addKidOpen, setAddKidOpen] = useState(false);
-  const [removingId, setRemovingId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
 
-  async function handleRemoveKid(kid: KidSummary) {
+  function handleRemoveKid(kid: KidSummary) {
     if (!session?.backendToken) return;
     if (!confirm(`Remove ${kid.name}? This deletes their balance and investment history too.`)) return;
-    setRemovingId(kid.id);
-    try {
-      await api.delete(`/kids/${kid.id}`, session.backendToken);
-      router.refresh();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Something went wrong");
-    } finally {
-      setRemovingId(null);
-    }
+
+    const token = session.backendToken;
+    const rollback = removeKidOptimistic(kid.id);
+
+    api
+      .delete(`/kids/${kid.id}`, token)
+      .then(() => refreshHome())
+      .catch((e) => {
+        rollback();
+        const msg =
+          e instanceof ApiError && e.status < 500
+            ? e.message
+            : `Couldn't remove ${kid.name} — they're back in the list.`;
+        toast(msg, "error");
+      });
   }
 
   return (
@@ -56,8 +59,6 @@ export function SettingsForm({
             </option>
           ))}
         </select>
-
-        {error && <p className="text-[13px] text-negative">{error}</p>}
 
         <button
           type="button"
@@ -82,25 +83,28 @@ export function SettingsForm({
       <div className="flex flex-col gap-2.5">
         <span className="text-[12px] font-semibold text-muted">Kids</span>
 
-        {kids.map((kid) => (
-          <div
-            key={kid.id}
-            className="bg-card rounded-2xl px-4 py-3 border border-border-hairline flex items-center justify-between"
-          >
-            <div className="flex items-center gap-2.5">
-              <Avatar name={kid.name} color={kid.avatar_color} size={32} />
-              <span className="font-semibold text-[14.5px] text-emerald-dark">{kid.name}</span>
-            </div>
-            <button
-              type="button"
-              disabled={removingId === kid.id}
-              onClick={() => handleRemoveKid(kid)}
-              className="text-[12.5px] font-semibold text-negative cursor-pointer disabled:opacity-50"
+        {kids.map((kid) => {
+          const pending = kid.id.startsWith("temp-");
+          return (
+            <div
+              key={kid.id}
+              className="bg-card rounded-2xl px-4 py-3 border border-border-hairline flex items-center justify-between"
             >
-              {removingId === kid.id ? "Removing…" : "Remove"}
-            </button>
-          </div>
-        ))}
+              <div className="flex items-center gap-2.5">
+                <Avatar name={kid.name} color={kid.avatar_color} size={32} />
+                <span className="font-semibold text-[14.5px] text-emerald-dark">{kid.name}</span>
+              </div>
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => handleRemoveKid(kid)}
+                className="text-[12.5px] font-semibold text-negative cursor-pointer disabled:opacity-40"
+              >
+                {pending ? "Saving…" : "Remove"}
+              </button>
+            </div>
+          );
+        })}
 
         <button
           type="button"
@@ -133,9 +137,10 @@ export function SettingsForm({
               setResetting(true);
               try {
                 await api.post("/internal/dev-reset", session.backendToken);
+                resetClientCaches();
                 await signOut({ callbackUrl: "/" });
               } catch (e) {
-                setError(e instanceof ApiError ? e.message : "Reset failed");
+                toast(e instanceof ApiError ? e.message : "Reset failed", "error");
                 setResetting(false);
               }
             }}

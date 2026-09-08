@@ -61,6 +61,11 @@ class PortfolioOut(BaseModel):
     total_day_change_amount: Decimal
     total_day_change_pct: Decimal | None
     holdings: list[HoldingOut]
+    # When the scheduler last refreshed the prices behind this response
+    # (spec 4.3 — batch updated ~5x/day, never live). Lets the frontend
+    # cache price-derived screens with confidence instead of re-fetching
+    # on every navigation. None before the first scheduler run.
+    prices_as_of: datetime | None = None
 
 
 class BuySellQuoteRequest(BaseModel):

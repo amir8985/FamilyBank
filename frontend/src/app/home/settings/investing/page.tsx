@@ -1,22 +1,36 @@
+"use client";
+
 import Link from "next/link";
-import { requireSession } from "@/lib/session";
+import { useSession } from "next-auth/react";
+import { useCachedResource } from "@/lib/use-cached-resource";
 import { api } from "@/lib/api";
 import { PageHeader } from "@/components/ui/page-header";
+import { Skeleton } from "@/components/ui/skeleton";
 import { HubDeactivatedBadge, HubStillGrowingBadge } from "@/components/ui/hub-savings-badges";
 import type { FamilySettings, SavingsPlanOut } from "@/lib/types";
 
 // A hub for special per-kid investing/savings features — each is a
 // teaser card leading to its own settings screen (see CLAUDE.md's
 // boosted-stocks-and-interest / savings-plans status entries).
-export default async function InvestingSettingsPage() {
-  const session = await requireSession();
-  const [settings, plans] = await Promise.all([
-    api.get<FamilySettings>("/family/settings", session.backendToken),
-    api.get<SavingsPlanOut[]>("/family/savings-plans", session.backendToken),
-  ]);
-  const boostActive = settings.boost_buffer_rate !== null;
+export default function InvestingSettingsPage() {
+  const { data: session } = useSession();
+  const token = session?.backendToken ?? null;
+
+  const { data: settings } = useCachedResource<FamilySettings>(
+    token ? "family-settings" : null,
+    () => api.get<FamilySettings>("/family/settings", token as string),
+    { ttlMs: 5 * 60_000 }
+  );
+  const { data: plans } = useCachedResource<SavingsPlanOut[]>(
+    token ? "savings-plans" : null,
+    () => api.get<SavingsPlanOut[]>("/family/savings-plans", token as string),
+    { ttlMs: 60_000 }
+  );
+
+  const boostActive = settings ? settings.boost_buffer_rate !== null : null;
 
   const kindState = (isKind: (m: number) => boolean) => {
+    if (!plans) return null;
     const kindPlans = plans.filter((p) => isKind(p.lock_months));
     return {
       active: kindPlans.some((p) => p.is_active),
@@ -34,10 +48,14 @@ export default async function InvestingSettingsPage() {
         <div className="flex flex-col gap-2.5 bg-card rounded-2xl px-4 py-4 border border-border-hairline">
           <div className="flex items-center gap-1.5">
             <h2 className="font-serif font-semibold text-[16px] text-emerald-dark">Stock boost</h2>
-            {boostActive && (
-              <span className="text-[10px] font-semibold text-tint-dark bg-tint-emerald rounded-full px-1.5 py-0.5">
-                Active
-              </span>
+            {boostActive === null ? (
+              <Skeleton className="h-4 w-12" />
+            ) : (
+              boostActive && (
+                <span className="text-[10px] font-semibold text-tint-dark bg-tint-emerald rounded-full px-1.5 py-0.5">
+                  Active
+                </span>
+              )
             )}
           </div>
           <p className="text-[13.5px] text-muted leading-relaxed">
@@ -83,25 +101,30 @@ function SavingsCard({
 }: {
   title: string;
   kind: "flexible" | "locked";
-  state: { active: boolean; growingCount: number };
+  state: { active: boolean; growingCount: number } | null;
   blurb: string;
   href: string;
   cta: string;
 }) {
-  const { active, growingCount } = state;
   return (
     <div className="flex flex-col gap-2.5 bg-card rounded-2xl px-4 py-4 border border-border-hairline">
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center gap-1.5 flex-wrap">
           <h2 className="font-serif font-semibold text-[16px] text-emerald-dark">{title}</h2>
-          {active && (
-            <span className="text-[10px] font-semibold text-tint-dark bg-tint-emerald rounded-full px-1.5 py-0.5">
-              Active
-            </span>
+          {state === null ? (
+            <Skeleton className="h-4 w-12" />
+          ) : (
+            state.active && (
+              <span className="text-[10px] font-semibold text-tint-dark bg-tint-emerald rounded-full px-1.5 py-0.5">
+                Active
+              </span>
+            )
           )}
         </div>
-        {!active && <HubDeactivatedBadge kind={kind} />}
-        {!active && growingCount > 0 && <HubStillGrowingBadge count={growingCount} kind={kind} />}
+        {state && !state.active && <HubDeactivatedBadge kind={kind} />}
+        {state && !state.active && state.growingCount > 0 && (
+          <HubStillGrowingBadge count={state.growingCount} kind={kind} />
+        )}
       </div>
       <p className="text-[13.5px] text-muted leading-relaxed">{blurb}</p>
       <Link

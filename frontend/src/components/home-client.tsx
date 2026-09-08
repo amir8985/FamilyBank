@@ -7,10 +7,12 @@ import { KidCard } from "@/components/kid-card";
 import { DebtSheet } from "@/components/debt-sheet";
 import { Money } from "@/components/ui/money";
 import { formatMoney } from "@/lib/format";
-import type { FamilyHome, KidSummary } from "@/lib/types";
+import { useFamily } from "@/lib/family-store";
+import type { KidSummary } from "@/lib/types";
 import type { DebtTransactionType } from "@/lib/types";
 
-export function HomeClient({ home }: { home: FamilyHome }) {
+export function HomeClient() {
+  const { home } = useFamily();
   const [debtTarget, setDebtTarget] = useState<{
     kid: KidSummary;
     direction: DebtTransactionType;

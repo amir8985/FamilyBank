@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
-import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Money } from "@/components/ui/money";
 import { LotChart } from "@/components/ui/lot-chart";
 import { SavingsKindBadge } from "@/components/ui/savings-badge";
+import { useFamily } from "@/lib/family-store";
+import { invalidateKid } from "@/lib/use-cached-resource";
+import { useToast } from "@/components/ui/toast";
 import { api, ApiError } from "@/lib/api";
 import { formatMoney, formatDateTime } from "@/lib/format";
 import type { SavingsDepositDetailOut } from "@/lib/types";
@@ -36,26 +38,38 @@ export function SavingsDepositClient({
 }) {
   const { data: session } = useSession();
   const router = useRouter();
-  const [withdrawing, setWithdrawing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { applyKidBalanceDelta, refreshHome } = useFamily();
+  const toast = useToast();
 
   const currency = deposit.currency;
   const value = Number(deposit.current_value);
   const interest = Number(deposit.accrued_interest);
   const status = lockStatus(deposit);
 
-  async function handleWithdraw() {
+  function handleWithdraw() {
     if (!session?.backendToken) return;
     if (!confirm(`Withdraw ${formatMoney(value, currency)} from ${deposit.plan_name} back to cash?`)) return;
-    setWithdrawing(true);
-    setError(null);
-    try {
-      await api.post(`/kids/${kidId}/savings/${deposit.deposit_id}/withdraw`, session.backendToken);
-      router.push(`/home/kids/${kidId}`);
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Something went wrong");
-      setWithdrawing(false);
-    }
+
+    const token = session.backendToken;
+    // Cash goes back up right away and we return to the portfolio — the
+    // withdrawal persists in the background.
+    const rollback = applyKidBalanceDelta(kidId, value);
+    router.push(`/home/kids/${kidId}`);
+
+    api
+      .post(`/kids/${kidId}/savings/${deposit.deposit_id}/withdraw`, token)
+      .then(() => {
+        invalidateKid(kidId);
+        return refreshHome();
+      })
+      .catch((e) => {
+        rollback();
+        const msg =
+          e instanceof ApiError && e.status < 500
+            ? e.message
+            : "Couldn't withdraw that — nothing was moved.";
+        toast(msg, "error");
+      });
   }
 
   return (
@@ -100,8 +114,6 @@ export function SavingsDepositClient({
           {deposit.is_open ? status.text : `Withdrawn ${deposit.closed_at ? formatDateTime(deposit.closed_at) : ""}`}
         </div>
 
-        {error && <p className="text-[13px] text-negative">{error}</p>}
-
         {deposit.is_open &&
           (status.locked ? (
             <button
@@ -114,11 +126,10 @@ export function SavingsDepositClient({
           ) : (
             <button
               type="button"
-              disabled={withdrawing}
               onClick={handleWithdraw}
-              className="text-center min-h-11 py-[13px] rounded-xl text-[14px] font-semibold bg-negative text-white cursor-pointer disabled:opacity-50"
+              className="text-center min-h-11 py-[13px] rounded-xl text-[14px] font-semibold bg-negative text-white cursor-pointer"
             >
-              {withdrawing ? "Withdrawing…" : `Withdraw ${formatMoney(value, currency)}`}
+              {`Withdraw ${formatMoney(value, currency)}`}
             </button>
           ))}
       </div>

@@ -195,7 +195,88 @@ per-plan Cash-out button on off plans → hub Deactivated pill + redder
 per kid) → Deactivated pill shows with zero plans. Full detail is in
 git log for `savings-plans`.
 
-## Status as of 2026-09-07 — stock boost feature merged to worktree's branch (backend v1.6.0 / frontend v0.7.0)
+## Current state / handoff (2026-09-07, end of `finish-feature` on `worker-1`)
+
+**What this branch does:** removes the "every click freezes the UI" problem
+without waiting on the pending Render/Neon region move. Navigation between
+cached screens is now instant (a client-side `/home` store seeded once per
+session), and writes (add/deduct money, add/remove kid, currency change,
+sell, sell-all, buy) reflect immediately with background persistence +
+rollback-on-failure. Full rationale + file map in the "Instant UX" status
+section below; merge-with-stock-boost notes in the section just under this.
+
+**Key decisions:**
+- Hand-rolled client store + `useCachedResource` (no SWR/React-Query) —
+  the project keeps its runtime deps to next/react/next-auth.
+- The `/home` seed is a server-started promise read with `use()` inside
+  `FamilyProvider`'s own Suspense — NOT an `await` in the layout body
+  (that's the navigation-blocking trap; see Lessons learned).
+- Sell keeps its "Selling…" button (matches master's buy flow and its own
+  `SellControls` refactor) rather than the standalone optimistic-sell an
+  earlier draft had — sell is a deliberate action like buy.
+- `finish-feature` review pass fixed the real bugs it surfaced: cached
+  screens now refetch after `invalidateResource`/`clearResourceCache`
+  (they used to sit on a stuck skeleton after a write); `applyKidBalanceDelta`
+  moves `total_owed` too (the home total was left stale); currency change
+  now clears the resource cache (cached amounts were in the old currency);
+  a stale cached error no longer re-throws on remount before the retry
+  runs; `invalidateKid()` helper replaces the repeated 3-4 line invalidate
+  blocks.
+
+**Verified:** 101 backend tests pass; frontend `build` + `lint` + `tsc`
+clean; `npm run test:e2e` (5) pass; Playwright authed smoke against the
+synthetic test family confirms Home→Settings makes zero backend requests,
+optimistic deduct moves both the kid card and the family total, a forced
+500 rolls back + toasts, sell-all no longer strands a skeleton, buy /
+boost-settings / lot-detail / history screens all render with no console
+errors.
+
+**Versions:** frontend `0.8.0` (was 0.7.0 — minor: new client-data
+layer). Backend `prices_as_of` field is additive-only, no migration.
+
+**Next session / gotchas:**
+- Local dev: backend `.env` `CORS_ORIGINS` was widened to include
+  `http://localhost:3000` so the frontend can run there (the port Google
+  OAuth is registered for). Harmless; revert if you like.
+- `useCachedResource` re-renders every mounted hook on any cache write
+  (tiny pub/sub) — fine at this app's scale (≤3 hooks mounted), revisit
+  if a screen ever mounts many.
+- The 3 boost screens master added (`settings/investing`,
+  `settings/investing/boost`, `lots/[lotId]`) were converted to the same
+  client + `useCachedResource("family-settings")` pattern for consistent
+  instant nav.
+- Not yet done: push, merge to `master`, cut the next branch (gated on
+  user confirmation per project permissions).
+
+## Status as of 2026-09-07 — worker-1: instant-UX branch merged with master's stock-boost feature
+
+**`worker-1` now carries BOTH the instant-UX / client-store work (its own
+"Instant UX" section immediately below) AND `master`'s stock-boost feature
+(merged in from `origin/master`).** The two overlapped heavily —
+`investing_service.py`, `portfolio-client.tsx`, `sell-sheet.tsx`,
+`buy-form-client.tsx`, `settings-form.tsx`, the buy page, `types.ts` — 6
+files had literal conflict markers. Resolution notes:
+- The boost feature's new screens (`settings/investing/*`, `lots/[lotId]`)
+  were server components doing blocking `await api.get()`; converted to the
+  same client + `useCachedResource("family-settings")` / `useFamily()`
+  pattern as the rest, so navigation into them is instant too.
+- `master` rewrote the sell flow into `SellControls` (shared by `SellSheet`
+  + `lot-detail-client`); kept that structure and just swapped its
+  `router.refresh()` for the client-store reconcile
+  (`invalidateResource(...)` + `refreshHome()`) at each `onSold` callback.
+  The standalone optimistic-sell from the instant-UX branch was dropped —
+  sell is a deliberate action like buy, and both keep their "Selling…" /
+  "Buying…" button (matching `master`'s own design).
+- `buy-screen.tsx` (the instant-UX orchestrator) now also fetches
+  `/family/settings` via `useCachedResource` for `boost_buffer_rate` and
+  passes `master`'s `matchingHoldings` / `sellableHolding` / `boostBufferRate`
+  props to `BuyFormClient`.
+- `prices_as_of` (instant-UX backend addition) survived the auto-merge in
+  `compute_portfolio` + both schemas + `routes_kids`.
+- Verified after merge: `cd backend && pytest` (all pass), frontend
+  `build` + `lint` clean, Playwright smoke of the merged app.
+
+<details><summary>Original stock-boost merge wrap-up (from master, pre-merge)</summary>
 
 **The stock-boost feature (full detail in the "stock boost feature" status
 entry below — this is the finish-feature/merge wrap-up, not a re-description)
@@ -284,7 +365,115 @@ touched the *same* functions this feature also rewrote).
   happened, that confirmation is the next thing blocking this feature
   from reaching production.
 
+</details>
+
 ## Status as of 2026-09-07
+
+**Instant UX: client-side data store + optimistic writes (frontend
+v0.7.0, backend `prices_as_of` field). The app no longer freezes on a
+slow backend — navigation between cached screens is instant and writes
+reflect immediately, independent of the still-pending server region
+move.** Motivated directly by the user: "even if the server takes time,
+why can't we degrade the experience — when I deduct money I already have
+all the data, show it done and save in the background; and Settings
+should just open while it thinks." Both were true problems in how the
+frontend was built:
+
+- **Every `/home/*` page was a Server Component doing a blocking
+  `await api.get(...)` with `cache: "no-store"`.** Navigating to Settings
+  waited for the Next server to round-trip the backend (→ Neon) before
+  sending any HTML. Nothing was cached client-side, so Home → Settings
+  re-fetched `kids` + `base_currency` the user had *just* loaded. And
+  `GET /family/settings` on the Settings page was **100% redundant** —
+  it only used `base_currency`, already in the `/home` response
+  (`onboarding_completed`, the only other field, is used solely by the
+  layout gate). Same redundant `/family/settings` call was also in the
+  kid-portfolio and buy pages.
+- **Writes did `await api.post(...)` then `router.refresh()`** — a
+  second full server round-trip — with the button stuck on
+  "Confirming…" the whole time before any number moved. `debt-sheet`
+  already computed the new balance locally and threw it away.
+
+What shipped (hand-rolled — no new runtime dependency; the project keeps
+to next/react/next-auth):
+
+- **`src/lib/family-store.tsx` — `FamilyProvider` / `useFamily()`.**
+  Holds the whole `/home` payload client-side for the session. Seeded
+  **once** from a server-started, un-awaited promise passed from
+  `home/layout.tsx` and read with React's `use()` inside the provider's
+  own `<Suspense>` (the officially documented "use within a Context
+  Provider" pattern —
+  `node_modules/next/dist/docs/.../guides/single-page-applications.md`).
+  The layout keeps the provider mounted across every in-segment
+  navigation, so it suspends exactly once; every navigation after reads
+  the store synchronously. Exposes `refreshHome()` (deduped background
+  reconcile) and inverse-patch optimistic mutators
+  (`applyKidBalanceDelta`, `addKidOptimistic`, `removeKidOptimistic`,
+  `applyCurrencyOptimistic`) that each return a `rollback()` that
+  composes safely with other in-flight optimistic writes.
+- **`src/lib/use-cached-resource.ts`** — a tiny stale-while-revalidate
+  cache (module-level `Map` + pub/sub) for the per-kid detail data that
+  isn't in `/home` (portfolio, catalog, asset detail, debt/investment
+  history). Serves last value instantly + revalidates in the
+  background; `invalidateResource(keyOrPrefix)` after a write.
+  Catalog/asset TTL ~10 min (prices only move ~5x/day — see
+  `prices_as_of` below), portfolio ~15 s serve-stale-first.
+- **`src/components/ui/toast.tsx`** — `ToastProvider` / `useToast()`.
+  Optimistic writes close their sheet immediately, so a later failure
+  ("Couldn't update Maya's balance — it's been restored.") has no inline
+  spot; it surfaces as an auto-dismissing toast instead.
+- **Screens now instant from the store:** Home + Settings read
+  `useFamily()`, zero network on navigation (**Settings went from 2
+  backend calls to 0**). Kid portfolio / buy / history pages are Client
+  Components that render their header/name/cash **instantly** from the
+  `/home` kid summary and stream the detail in via `useCachedResource`
+  with section-level skeletons. All redundant `/family/settings` calls
+  deleted (currency comes from the store).
+- **Optimistic writes:** add/deduct money, add/remove kid, sell, and
+  currency change all apply locally + close immediately, POST in the
+  background, `refreshHome()` to reconcile, and toast + `rollback()` on
+  failure. Buy keeps its "Buying…" button (it has a real server quote
+  and is a deliberate action) but now invalidates the portfolio cache +
+  `refreshHome()` instead of `router.refresh()`, so arriving at the
+  portfolio screen is instant with fresh holdings streaming in.
+- **Auth guard moved fully into `home/layout.tsx`** (`await
+  requireSession()` in the body — it only reads/verifies the session
+  cookie, no network, sub-ms block) since the pages below are now
+  Client Components that can't call it themselves. The
+  onboarding-completed check + the `/home` seed stay in their own
+  `<Suspense>` boundaries (both are real backend calls — the
+  navigation-blocking trap). `public.spec.ts`'s unauthenticated-redirect
+  tests still pass.
+- **Backend: `prices_as_of` (nullable datetime) added to `/home` and
+  `/portfolio` responses** — the max `PriceCache.updated_at`, computed
+  in Python from the already-loaded `PriceContext.prices` (no extra
+  query; new `PriceContext.prices_as_of` property). It's the timestamp
+  the user correctly pointed out "should already be there" (the
+  scheduler stamps every price row the same time per ~5h refresh — see
+  `jobs.last_refresh_at`). Lets the client cache price-derived screens
+  with confidence. `/catalog` already exposed per-asset
+  `price_updated_at`.
+- **Verified for real:** 82 backend tests pass; frontend
+  `build`/`lint` clean; drove it with Playwright against a minted
+  NextAuth cookie + the synthetic test family (Maya/Noah seeded with a
+  balance + a QQQ holding) — confirmed Home→Settings makes **zero**
+  backend requests, deduct closes the sheet and moves the balance
+  instantly, a forced-500 deduct rolls back + toasts, optimistic
+  add/remove kid reconciles temp→real row, buy/currency-change/history
+  all work with no console errors, and bad-kid-id / bad-symbol still hit
+  the error boundary / not-found page.
+- **Known cosmetic artifact, not a bug:** React streaming leaves a
+  `display:none` duplicate of the resolved Suspense subtree in the DOM
+  briefly during hydration (so `getByText` in a test can transiently
+  match two copies, one hidden). Cleaned up once hydration completes;
+  the user never sees it. Scope Playwright locators to `visible=true`.
+- **Trade-offs accepted:** optimistic values can briefly snap back on a
+  server rejection (rare — mitigated by toast + reconcile); the client
+  cache can show data a few seconds stale until background revalidation
+  (fine — prices move every 5h, balances reconcile within one
+  `/home` refresh per write); the first hard load of any `/home/*` URL
+  still needs one `/home` round-trip to seed the store (same wait as
+  the old `loading.tsx`), every navigation after is instant.
 
 **Production-slowness root cause found: it's per-query network latency
 to Neon, multiplied by however many queries an endpoint runs
@@ -1306,6 +1495,34 @@ worktree/checkout.
 
 ## Lessons learned this session (don't reintroduce these)
 
+- **The client family store (`src/lib/family-store.tsx`) is seeded from
+  a server-started promise, NOT an `await` in the layout body.**
+  `home/layout.tsx` does `const homePromise = api.get("/home", token)`
+  (no `await`) and passes it to `<FamilyProvider>`, which reads it with
+  React `use()` inside its *own* `<Suspense>`. Awaiting it in the layout
+  body would re-introduce the exact navigation-blocking trap the whole
+  feature exists to remove (a layout that does an uncached fetch blocks
+  every route beneath it and no `loading.tsx` can cover it). The
+  provider must keep its own `<Suspense>` — `use()` suspends and
+  `home/loading.tsx` sits *below* the provider so can't catch it.
+  `requireSession()` in the layout body is fine (cookie-only, no
+  network) and is now the sole auth guard for the segment since the
+  pages are Client Components.
+- **React streaming leaves a `display:none` duplicate of a resolved
+  `<Suspense>` subtree in the DOM during hydration.** A Playwright
+  `getByText("Maya")` can transiently match two copies (one hidden) and
+  fail strict-mode. Not a bug — it's how React delivers streamed
+  Suspense content (hidden div, then moved into place), gone once
+  hydration finishes. Scope test locators to `visible=true` /
+  `.first()` and `waitForLoadState("networkidle")`; the user never sees
+  it.
+- **Optimistic rollbacks must be inverse patches, not snapshot
+  restores** (see `family-store.tsx`'s mutators). Two rapid optimistic
+  writes (deduct on two kids) each capture a pre-write snapshot; if one
+  fails and restores its snapshot it clobbers the other's change.
+  `applyKidBalanceDelta(id, +d)` rolling back as `applyKidBalanceDelta(id, -d)`
+  composes correctly. Currency change is the one snapshot-restore
+  rollback (big, human-paced, not realistically concurrent).
 - **`sqlalchemy.Enum(SomePyEnum)` binds by the Python member's `.name`
   ("ADD"), not `.value` ("add"), by default.** Every enum column needs
   `values_callable=lambda e: [m.value for m in e]` or asyncpg will

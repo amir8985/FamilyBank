@@ -3,17 +3,43 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
 import { TickerBadge } from "@/components/ui/ticker-badge";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Money } from "@/components/ui/money";
+import { Skeleton } from "@/components/ui/skeleton";
 import { SavingsDepositSheet } from "@/components/savings-deposit-sheet";
 import { SavingsKindBadge } from "@/components/ui/savings-badge";
+import { useFamily } from "@/lib/family-store";
+import { invalidateKid } from "@/lib/use-cached-resource";
 import { api, ApiError } from "@/lib/api";
 import { formatMoney, formatPct, trimUnits } from "@/lib/format";
-import type { AssetOut, DepositablePlanOut, PortfolioOut, SavingsOverviewOut } from "@/lib/types";
+import type {
+  AssetOut,
+  DepositablePlanOut,
+  PortfolioOut,
+  SavingsOverviewOut,
+} from "@/lib/types";
 
 type Tab = "holdings" | "buy" | "save";
+
+function RowSkeletons() {
+  return (
+    <>
+      {[0, 1, 2].map((i) => (
+        <div
+          key={i}
+          className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex items-center justify-between"
+        >
+          <div className="flex items-center gap-3">
+            <Skeleton className="w-9 h-9 rounded-full" />
+            <Skeleton className="h-4 w-28" />
+          </div>
+          <Skeleton className="h-4 w-16" />
+        </div>
+      ))}
+    </>
+  );
+}
 
 function unlockLabel(deposit: SavingsOverviewOut["deposits"][number]): string {
   if (!deposit.is_locked) return "Flexible";
@@ -38,6 +64,9 @@ export function PortfolioClient({
   catalog,
   currency,
   initialTab,
+  holdingsLoading = false,
+  catalogLoading = false,
+  savingsLoading = false,
 }: {
   kidId: string;
   portfolio: PortfolioOut;
@@ -45,9 +74,12 @@ export function PortfolioClient({
   catalog: AssetOut[];
   currency: string;
   initialTab: Tab;
+  holdingsLoading?: boolean;
+  catalogLoading?: boolean;
+  savingsLoading?: boolean;
 }) {
   const { data: session } = useSession();
-  const router = useRouter();
+  const { refreshHome } = useFamily();
   const [tab, setTab] = useState<Tab>(initialTab);
   const [sellingAll, setSellingAll] = useState(false);
   const [sellAllError, setSellAllError] = useState<string | null>(null);
@@ -57,6 +89,7 @@ export function PortfolioClient({
   const isPositive = Number(portfolio.total_day_change_amount) >= 0;
   const hasInvestments = portfolio.holdings.length > 0;
   const hasSavings = savings.deposits.length > 0;
+  const savingsValue = Number(savings.savings_value);
 
   async function handleSellEverything() {
     if (!session?.backendToken) return;
@@ -65,7 +98,8 @@ export function PortfolioClient({
     setSellAllError(null);
     try {
       await api.post(`/kids/${kidId}/sell-all`, session.backendToken);
-      router.refresh();
+      invalidateKid(kidId);
+      refreshHome();
     } catch (e) {
       setSellAllError(e instanceof ApiError ? e.message : "Something went wrong");
     } finally {
@@ -107,7 +141,7 @@ export function PortfolioClient({
               {dayChangePct}
             </span>
           )}
-          {Number(savings.savings_value) > 0 && (
+          {savingsValue > 0 && (
             <span className="text-[14px] font-medium text-muted-strong">
               · {formatMoney(savings.savings_value, currency)} saved
             </span>
@@ -156,7 +190,8 @@ export function PortfolioClient({
                 </Link>
               );
             })}
-            {!hasSavings && (
+            {!hasSavings && savingsLoading && <RowSkeletons />}
+            {!hasSavings && !savingsLoading && (
               <p className="text-[13px] text-muted">
                 Nothing saved yet — switch to Save to put some cash aside.
               </p>
@@ -203,7 +238,8 @@ export function PortfolioClient({
               );
             })}
 
-            {!hasInvestments && (
+            {!hasInvestments && holdingsLoading && <RowSkeletons />}
+            {!hasInvestments && !holdingsLoading && (
               <p className="text-[13px] text-muted">
                 No investments yet — switch to Invest to get started.
               </p>
@@ -227,24 +263,27 @@ export function PortfolioClient({
           </>
         )}
 
-        {tab === "buy" && (
-          <>
-            <CatalogSection
-              title="Baskets"
-              subtitle="A slice of many companies at once — steadier, simpler."
-              assets={catalog.filter((a) => a.kind === "basket")}
-              kidId={kidId}
-              currency={currency}
-            />
-            <CatalogSection
-              title="Individual stocks"
-              subtitle="One company at a time — more ups and downs."
-              assets={catalog.filter((a) => a.kind === "stock")}
-              kidId={kidId}
-              currency={currency}
-            />
-          </>
-        )}
+        {tab === "buy" &&
+          (catalog.length === 0 && catalogLoading ? (
+            <RowSkeletons />
+          ) : (
+            <>
+              <CatalogSection
+                title="Baskets"
+                subtitle="A slice of many companies at once — steadier, simpler."
+                assets={catalog.filter((a) => a.kind === "basket")}
+                kidId={kidId}
+                currency={currency}
+              />
+              <CatalogSection
+                title="Individual stocks"
+                subtitle="One company at a time — more ups and downs."
+                assets={catalog.filter((a) => a.kind === "stock")}
+                kidId={kidId}
+                currency={currency}
+              />
+            </>
+          ))}
 
         {tab === "save" && (
           <>
@@ -283,7 +322,8 @@ export function PortfolioClient({
                 </div>
               );
             })}
-            {savings.plans.length === 0 && (
+            {savings.plans.length === 0 && savingsLoading && <RowSkeletons />}
+            {savings.plans.length === 0 && !savingsLoading && (
               <p className="text-center text-[13px] text-muted pt-4">
                 No savings plans yet — a parent can add them under Settings › Advanced investing &amp;
                 savings.

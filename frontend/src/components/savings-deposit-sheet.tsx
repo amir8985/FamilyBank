@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
+import { useFamily } from "@/lib/family-store";
+import { invalidateKid } from "@/lib/use-cached-resource";
+import { useToast } from "@/components/ui/toast";
 import { api, ApiError } from "@/lib/api";
 import { currencySymbol, formatMoney } from "@/lib/format";
 import type { DepositablePlanOut } from "@/lib/types";
@@ -28,31 +30,41 @@ export function SavingsDepositSheet({
   onClose: () => void;
 }) {
   const { data: session } = useSession();
-  const router = useRouter();
+  const { applyKidBalanceDelta, refreshHome } = useFamily();
+  const toast = useToast();
   const [amount, setAmount] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const parsed = Number(amount) || 0;
   const tooMuch = parsed > cashAvailable;
   const locked = plan.lock_months > 0;
 
-  async function handleConfirm() {
-    if (!session?.backendToken || parsed <= 0 || tooMuch) return;
+  function handleConfirm() {
+    if (!session?.backendToken || parsed <= 0 || tooMuch || submitting) return;
     setSubmitting(true);
-    setError(null);
-    try {
-      await api.post(`/kids/${kidId}/savings/deposit`, session.backendToken, {
-        plan_id: plan.id,
-        amount: parsed,
+
+    const token = session.backendToken;
+    // Apply immediately and close — the cash drop is all the parent needs
+    // to see. The new deposit row fills in when the background
+    // invalidate + refetch lands (same as buy/sell, which don't
+    // optimistically insert their row either).
+    const rollback = applyKidBalanceDelta(kidId, -parsed);
+    onClose();
+
+    api
+      .post(`/kids/${kidId}/savings/deposit`, token, { plan_id: plan.id, amount: parsed })
+      .then(() => {
+        invalidateKid(kidId);
+        return refreshHome();
+      })
+      .catch((e) => {
+        rollback();
+        const msg =
+          e instanceof ApiError && e.status < 500
+            ? e.message
+            : "Couldn't move that to savings — the cash is back.";
+        toast(msg, "error");
       });
-      onClose();
-      router.refresh();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Something went wrong");
-    } finally {
-      setSubmitting(false);
-    }
   }
 
   return (
@@ -88,7 +100,6 @@ export function SavingsDepositSheet({
       </div>
 
       {tooMuch && <p className="text-[13px] text-negative -mt-2">That&apos;s more than the cash available.</p>}
-      {error && <p className="text-[13px] text-negative -mt-2">{error}</p>}
 
       <button
         type="button"
@@ -96,7 +107,7 @@ export function SavingsDepositSheet({
         onClick={handleConfirm}
         className="bg-emerald text-white text-center min-h-11 py-[15px] rounded-xl text-[15px] font-semibold disabled:opacity-50 cursor-pointer"
       >
-        {submitting ? "Saving…" : `Move ${formatMoney(parsed, currency)} to savings`}
+        {`Move ${formatMoney(parsed, currency)} to savings`}
       </button>
     </BottomSheet>
   );

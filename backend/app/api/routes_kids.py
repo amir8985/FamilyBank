@@ -50,7 +50,11 @@ async def get_family_home(
         )
 
     return FamilyHome(
-        base_currency=family.base_currency, total_owed=total_owed, total_invested=total_invested, kids=summaries
+        base_currency=family.base_currency,
+        total_owed=total_owed,
+        total_invested=total_invested,
+        kids=summaries,
+        prices_as_of=ctx.prices_as_of,
     )
 
 

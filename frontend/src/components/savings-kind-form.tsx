@@ -2,15 +2,19 @@
 
 import { useState } from "react";
 import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
 import { ConfirmSheet } from "@/components/ui/confirm-sheet";
 import { PlanDepositMarker } from "@/components/ui/plan-deposit-marker";
 import { SavingsLeftoversSheet, type LeftoverPlan } from "@/components/savings-leftovers-sheet";
+import { useFamily } from "@/lib/family-store";
+import { invalidateKid } from "@/lib/use-cached-resource";
+import { useToast } from "@/components/ui/toast";
 import { annualFromMonthly, formatMoney } from "@/lib/format";
 import type { PlanDepositOut, SavingsPlanOut, SavingsPresetOut } from "@/lib/types";
 
 type Kind = "flexible" | "locked";
+
+type MutatePlans = (updater: (prev: SavingsPlanOut[] | undefined) => SavingsPlanOut[]) => () => void;
 
 function clampRate(v: number): number {
   return Math.min(100, Math.max(0.1, Math.round(v * 10) / 10));
@@ -26,14 +30,19 @@ export function SavingsKindForm({
   kind,
   plans,
   presets,
+  mutatePlans,
+  revalidatePlans,
 }: {
   kind: Kind;
   plans: SavingsPlanOut[];
   presets: SavingsPresetOut[];
+  mutatePlans: MutatePlans;
+  revalidatePlans: () => Promise<void>;
 }) {
   const { data: session } = useSession();
   const token = session?.backendToken;
-  const router = useRouter();
+  const { refreshHome } = useFamily();
+  const toast = useToast();
 
   const kindPresets = presets.filter((p) => p.kind === kind);
   const inKind = (p: SavingsPlanOut) => (kind === "flexible" ? p.lock_months === 0 : p.lock_months > 0);
@@ -44,13 +53,26 @@ export function SavingsKindForm({
 
   // Nothing is written until "Save changes" — a checkbox only stages.
   const [override, setOverride] = useState<Record<string, boolean>>({});
-  // Drop staged state whenever the server data changes under us (after a
-  // save + refresh) — React's documented "adjust state during render".
+
+  const serverStateOf = (k: string) =>
+    k.startsWith("preset:")
+      ? serverPresetOn(k.slice("preset:".length))
+      : serverCustomOn(k.slice("custom:".length));
+
+  // When the cached plan list changes under us (optimistic mutate,
+  // background revalidate, another tab), prune any staged entry that the
+  // server now agrees with — keeps a still-pending selection intact if a
+  // failed save rolls the cache back. React's "adjust state during render".
   const sig = plans.map((p) => `${p.id}:${p.is_active}`).join("|");
   const [lastSig, setLastSig] = useState(sig);
   if (sig !== lastSig) {
     setLastSig(sig);
-    setOverride({});
+    setOverride((o) => {
+      const pruned = Object.fromEntries(
+        Object.entries(o).filter(([k, v]) => serverStateOf(k) !== v),
+      );
+      return Object.keys(pruned).length === Object.keys(o).length ? o : pruned;
+    });
   }
 
   const presetOn = (key: string) => override[`preset:${key}`] ?? serverPresetOn(key);
@@ -82,18 +104,33 @@ export function SavingsKindForm({
     setOverride((o) => ({ ...o, [`custom:${id}`]: on }));
   }
 
-  async function applyToggles() {
-    if (!token) return;
+  type ToggleChange =
+    | { kind: "preset"; key: string; want: boolean }
+    | { kind: "custom"; id: string; want: boolean };
+
+  // Snapshot the pending changes from `override` vs. the server. Must be
+  // read *before* any optimistic cache mutate, which would otherwise make
+  // these look already-applied.
+  function pendingChanges(): ToggleChange[] {
+    const out: ToggleChange[] = [];
     for (const preset of kindPresets) {
       const want = presetOn(preset.key);
-      if (want !== serverPresetOn(preset.key)) {
-        await api.post("/family/savings-presets", token, { key: preset.key, active: want });
-      }
+      if (want !== serverPresetOn(preset.key)) out.push({ kind: "preset", key: preset.key, want });
     }
     for (const plan of customPlans) {
       const want = customOn(plan.id);
-      if (want !== serverCustomOn(plan.id)) {
-        await api.patch(`/family/savings-plans/${plan.id}`, token, { is_active: want });
+      if (want !== serverCustomOn(plan.id)) out.push({ kind: "custom", id: plan.id, want });
+    }
+    return out;
+  }
+
+  async function applyChanges(changes: ToggleChange[]) {
+    if (!token) return;
+    for (const c of changes) {
+      if (c.kind === "preset") {
+        await api.post("/family/savings-presets", token, { key: c.key, active: c.want });
+      } else {
+        await api.patch(`/family/savings-plans/${c.id}`, token, { is_active: c.want });
       }
     }
   }
@@ -117,13 +154,39 @@ export function SavingsKindForm({
     return out;
   }
 
+  // Optimistically flip the cached plan rows to the just-staged state so
+  // the checkboxes stay put the instant Save is pressed; reconciled by
+  // revalidatePlans() once the writes land.
+  function optimisticApply(changes: ToggleChange[]): () => void {
+    return mutatePlans((prev) =>
+      (prev ?? []).map((p) => {
+        const hit = changes.find((c) =>
+          c.kind === "preset" ? p.preset_key === c.key : p.id === c.id,
+        );
+        return hit ? { ...p, is_active: hit.want } : p;
+      }),
+    );
+  }
+
+  async function cashOutOne(plan: SavingsPlanOut, deposits: PlanDepositOut[]) {
+    if (!token) return;
+    await api.post(`/family/savings-plans/${plan.id}/cash-out`, token);
+    // Each kid's money is back in their cash — refresh the home store and
+    // drop their cached portfolio/savings so those screens are correct
+    // next time they're opened.
+    for (const d of deposits) invalidateKid(d.kid_id);
+    refreshHome();
+  }
+
   async function handleSave() {
     if (!token) return;
     const affected = turnedOffWithDeposits();
+    const changes = pendingChanges();
     setSaving(true);
     setError(null);
+    const rollback = optimisticApply(changes);
     try {
-      await applyToggles();
+      await applyChanges(changes);
       const left: LeftoverPlan[] =
         affected.length === 0
           ? []
@@ -137,9 +200,10 @@ export function SavingsKindForm({
               })),
             );
       setOverride({});
-      router.refresh();
+      revalidatePlans();
       if (left.length > 0) setLeftovers(left);
     } catch (e) {
+      rollback();
       setError(e instanceof ApiError ? e.message : "Something went wrong");
     } finally {
       setSaving(false);
@@ -159,7 +223,7 @@ export function SavingsKindForm({
       setName("");
       setRate(kind === "locked" ? 3.0 : 1.0);
       setLockMonths(6);
-      router.refresh();
+      revalidatePlans();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Something went wrong");
     } finally {
@@ -169,13 +233,16 @@ export function SavingsKindForm({
 
   async function confirmDelete() {
     if (!token || !deleteTarget) return;
+    const id = deleteTarget.id;
     setBusy(true);
     setError(null);
+    const rollback = mutatePlans((prev) => (prev ?? []).filter((p) => p.id !== id));
+    setDeleteTarget(null);
     try {
-      await api.delete(`/family/savings-plans/${deleteTarget.id}`, token);
-      setDeleteTarget(null);
-      router.refresh();
+      await api.delete(`/family/savings-plans/${id}`, token);
+      revalidatePlans();
     } catch (e) {
+      rollback();
       setError(e instanceof ApiError ? e.message : "Something went wrong");
     } finally {
       setBusy(false);
@@ -184,11 +251,12 @@ export function SavingsKindForm({
 
   async function resolveLeftover(plan: SavingsPlanOut, action: "cash-out" | "reopen") {
     if (!token) return;
+    const entry = (leftovers ?? []).find((l) => l.plan.id === plan.id);
     setLeftoverBusy(plan.id);
     setError(null);
     try {
       if (action === "cash-out") {
-        await api.post(`/family/savings-plans/${plan.id}/cash-out`, token);
+        await cashOutOne(plan, entry?.deposits ?? []);
       } else if (plan.preset_key) {
         await api.post("/family/savings-presets", token, { key: plan.preset_key, active: true });
       } else {
@@ -198,7 +266,7 @@ export function SavingsKindForm({
         const next = (cur ?? []).filter((l) => l.plan.id !== plan.id);
         return next.length ? next : null;
       });
-      router.refresh();
+      revalidatePlans();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Something went wrong");
     } finally {
@@ -225,14 +293,16 @@ export function SavingsKindForm({
 
   async function confirmCashOut() {
     if (!token || !cashOutTarget) return;
+    const target = cashOutTarget;
     setBusy(true);
     setError(null);
+    setCashOutTarget(null);
     try {
-      await api.post(`/family/savings-plans/${cashOutTarget.plan.id}/cash-out`, token);
-      setCashOutTarget(null);
-      router.refresh();
+      await cashOutOne(target.plan, target.deposits);
+      revalidatePlans();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Something went wrong");
+      toast(e instanceof ApiError ? e.message : "Cash-out failed", "error");
     } finally {
       setBusy(false);
     }

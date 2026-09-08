@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useFamily } from "@/lib/family-store";
+import { invalidateKid } from "@/lib/use-cached-resource";
 import { PageHeader } from "@/components/ui/page-header";
 import { Money } from "@/components/ui/money";
 import { LotChart } from "@/components/ui/lot-chart";
@@ -21,6 +23,7 @@ export function LotDetailClient({
   cashAvailable: number;
 }) {
   const router = useRouter();
+  const { refreshHome } = useFamily();
   const [badgeOpen, setBadgeOpen] = useState(false);
 
   // `current_value`/`purchase_price` are per-unit, in the lot's own
@@ -117,7 +120,11 @@ export function LotDetailClient({
             // Any sell here — partial or full — is the natural end of a
             // visit to this page; return to My Investments rather than
             // leaving the parent stranded on a (now stale) lot page.
-            onSold={() => router.push(`/home/kids/${kidId}`)}
+            onSold={() => {
+              invalidateKid(kidId);
+              refreshHome();
+              router.push(`/home/kids/${kidId}`);
+            }}
           />
         )}
       </div>

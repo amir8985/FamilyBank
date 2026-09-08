@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
 import { formatMoney } from "@/lib/format";
 import { SellAndRebuySheet } from "@/components/sell-and-rebuy-sheet";
+import { useFamily } from "@/lib/family-store";
+import { clearResourceCache, invalidateResource } from "@/lib/use-cached-resource";
 
 const RECOMMENDED_RATE = 3.0;
 const DAYS_PER_MONTH = 30.44;
@@ -31,6 +33,7 @@ function clampRate(value: number): number {
 export function BoostSettingsForm({ currentRate }: { currentRate: string | null }) {
   const { data: session } = useSession();
   const router = useRouter();
+  const { refreshHome } = useFamily();
 
   const isOn = currentRate !== null;
   const [enabled, setEnabled] = useState(isOn);
@@ -74,6 +77,7 @@ export function BoostSettingsForm({ currentRate }: { currentRate: string | null 
       await api.patch("/family/settings/boost-buffer-rate", session.backendToken, {
         rate: enabled ? rate : null,
       });
+      invalidateResource("family-settings");
       // Saving is the natural end of this screen's job — send the parent
       // back to Settings rather than leaving them stranded here (per
       // user feedback: a way back out, without adding another UI element).
@@ -98,6 +102,11 @@ export function BoostSettingsForm({ currentRate }: { currentRate: string | null 
       await api.post("/family/settings/boost-buffer-rate/sell-and-rebuy", session.backendToken, {
         rate: enabled ? rate : null,
       });
+      // Sell-and-rebuy touches every kid's holdings and cash — the
+      // simplest safe reconcile is to drop all per-kid caches and pull
+      // a fresh home.
+      clearResourceCache();
+      refreshHome();
       router.push("/home/settings");
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Something went wrong");

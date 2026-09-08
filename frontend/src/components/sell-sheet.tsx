@@ -1,8 +1,9 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { SellControls } from "@/components/sell-controls";
+import { useFamily } from "@/lib/family-store";
+import { invalidateKid } from "@/lib/use-cached-resource";
 import { formatMoney, trimUnits } from "@/lib/format";
 import type { HoldingOut } from "@/lib/types";
 
@@ -21,7 +22,7 @@ export function SellSheet({
   cashAvailable: number;
   currency: string;
 }) {
-  const router = useRouter();
+  const { refreshHome } = useFamily();
 
   return (
     <BottomSheet onClose={onClose}>
@@ -39,7 +40,10 @@ export function SellSheet({
         currency={currency}
         onSold={() => {
           onClose();
-          router.refresh();
+          // Client store reconcile instead of router.refresh() — the
+          // screens that read this data are client-rendered from cache now.
+          invalidateKid(kidId);
+          refreshHome();
         }}
       />
     </BottomSheet>

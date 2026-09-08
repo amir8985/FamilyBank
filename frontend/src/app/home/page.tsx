@@ -1,10 +1,8 @@
-import { requireSession } from "@/lib/session";
-import { api } from "@/lib/api";
 import { HomeClient } from "@/components/home-client";
-import type { FamilyHome } from "@/lib/types";
 
-export default async function HomePage() {
-  const session = await requireSession();
-  const home = await api.get<FamilyHome>("/home", session.backendToken);
-  return <HomeClient home={home} />;
+// Data comes from the client family store (seeded once in home/layout.tsx),
+// so this navigation is instant — no per-visit server round-trip. The
+// auth guard lives in the layout.
+export default function HomePage() {
+  return <HomeClient />;
 }
