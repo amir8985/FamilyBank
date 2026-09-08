@@ -125,6 +125,34 @@ Rate is a monthly percentage, compounded daily on read.
   **Flexible** / **Locked** headings. 21 savings tests pass, full
   suite green, build/lint clean, re-verified live with Playwright
   (toggled presets on both pages, confirmed hub pills + kid Save tab).
+- **Third round (same session, more feedback):**
+  - **Custom in-app confirm sheet** (`components/ui/confirm-sheet.tsx`,
+    `ConfirmSheet`) replaces `window.confirm()` for savings actions —
+    amber-toned (new `--color-tint-brass` / `--color-brass-dark` tokens,
+    derived from the existing `--color-brass` accent), calmer than
+    `SellAndRebuySheet`'s red. Used for plan-delete and the new
+    cash-out.
+  - **Bulk cash-out**: `POST /family/savings/cash-out` `{kind}` closes
+    every open deposit of that kind (flexible / locked), for every kid,
+    paying each back to that kid's cash — **overrides the maturity lock
+    on locked deposits** (parent's own money to release). Button shows
+    on each kind's settings page only when that kind has open deposits.
+    `savings_service._close_deposit` is the shared helper (normal
+    withdraw enforces maturity, cash-out doesn't).
+  - Preset section heading "Ready-made plans" → **"Recommended plans"**.
+  - The flexible preset renamed "Everyday savings" → **"Flexible plan"**
+    (preset_key stays `flex`, so already-activated rows are unaffected
+    until re-toggled).
+  - Custom ("Your own") plans now have an **activate checkbox** too
+    (was delete-only) — just a `PATCH {is_active}`.
+  - Kid portfolio + deposit-detail: locked vs flexible deposits get a
+    small tinted padlock pill (`components/ui/savings-badge.tsx`,
+    `SavingsKindBadge` — closed padlock + amber for locked, open
+    padlock + emerald for flexible/unlocked).
+  - No new migration this round. 13 `test_savings_plans` + 10
+    `test_savings_service` pass; build/lint clean; re-verified live
+    (amber sheets, cash-out actually emptied the deposits, badges
+    render).
 - **Deferred, still**: "interest from parent" as a *separate* flat
   cash-balance rate — this savings-plans feature is the more general
   version of that idea, so it may now be moot; confirm with the user

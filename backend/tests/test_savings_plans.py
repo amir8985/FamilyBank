@@ -223,6 +223,80 @@ async def test_reactivating_a_preset_that_still_has_deposits_reuses_the_same_row
     assert len(plans) == 1 and plans[0]["id"] == first_id and plans[0]["is_active"] is True
 
 
+async def test_cash_out_closes_every_deposit_of_one_kind_for_all_kids(
+    client, auth_headers, family, db_session
+):
+    a = await _kid(db_session, family, "A")
+    b = await _kid(db_session, family, "B")
+    for kid in (a, b):
+        await debts_db_service.record_transaction(db_session, kid.id, DebtTransactionType.ADD, Decimal("200"))
+    await db_session.commit()
+
+    flex = (
+        await client.post(
+            "/family/savings-plans", headers=auth_headers, json={"name": "F", "monthly_rate": 1.0, "lock_months": 0}
+        )
+    ).json()["id"]
+    locked = (
+        await client.post(
+            "/family/savings-plans", headers=auth_headers, json={"name": "L", "monthly_rate": 2.0, "lock_months": 6}
+        )
+    ).json()["id"]
+    for kid in (a, b):
+        await client.post(
+            f"/kids/{kid.id}/savings/deposit", headers=auth_headers, json={"plan_id": flex, "amount": 50}
+        )
+        await client.post(
+            f"/kids/{kid.id}/savings/deposit", headers=auth_headers, json={"plan_id": locked, "amount": 50}
+        )
+
+    # cash out only the flexible ones (2 deposits, one per kid)
+    resp = await client.post("/family/savings/cash-out", headers=auth_headers, json={"kind": "flexible"})
+    assert resp.status_code == 200
+    assert resp.json()["closed_count"] == 2
+
+    for kid in (a, b):
+        overview = (await client.get(f"/kids/{kid.id}/savings", headers=auth_headers)).json()
+        # the locked deposit is still open, the flexible one is gone
+        assert [d["is_locked"] for d in overview["deposits"]] == [True]
+        assert Decimal((await client.get(f"/kids/{kid.id}/portfolio", headers=auth_headers)).json()["cash_available"]) >= Decimal("150.00")
+
+
+async def test_cash_out_locked_overrides_the_maturity_lock(client, auth_headers, family, db_session):
+    kid = await _kid(db_session, family)
+    await debts_db_service.record_transaction(db_session, kid.id, DebtTransactionType.ADD, Decimal("100"))
+    await db_session.commit()
+    locked = (
+        await client.post(
+            "/family/savings-plans", headers=auth_headers, json={"name": "L", "monthly_rate": 2.0, "lock_months": 12}
+        )
+    ).json()["id"]
+    await client.post(
+        f"/kids/{kid.id}/savings/deposit", headers=auth_headers, json={"plan_id": locked, "amount": 80}
+    )
+
+    resp = await client.post("/family/savings/cash-out", headers=auth_headers, json={"kind": "locked"})
+    assert resp.status_code == 200 and resp.json()["closed_count"] == 1
+    assert (await client.get(f"/kids/{kid.id}/savings", headers=auth_headers)).json()["deposits"] == []
+
+
+async def test_custom_plan_can_be_deactivated_and_reactivated(client, auth_headers, family):
+    plan_id = (
+        await client.post(
+            "/family/savings-plans", headers=auth_headers, json={"name": "Mine", "monthly_rate": 1.0, "lock_months": 0}
+        )
+    ).json()["id"]
+
+    off = await client.patch(f"/family/savings-plans/{plan_id}", headers=auth_headers, json={"is_active": False})
+    assert off.json()["is_active"] is False
+    # a deactivated plan isn't offered to kids
+    kid_view = (await client.get("/family/savings-plans", headers=auth_headers)).json()
+    assert kid_view[0]["is_active"] is False
+
+    on = await client.patch(f"/family/savings-plans/{plan_id}", headers=auth_headers, json={"is_active": True})
+    assert on.json()["is_active"] is True
+
+
 async def test_cannot_touch_another_familys_plans_or_deposit_for_their_kid(
     client, auth_headers, family, db_session
 ):

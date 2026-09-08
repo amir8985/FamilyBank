@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/ui/page-header";
 import { Money } from "@/components/ui/money";
 import { LotChart } from "@/components/ui/lot-chart";
+import { SavingsKindBadge } from "@/components/ui/savings-badge";
 import { api, ApiError } from "@/lib/api";
 import { formatMoney, formatDateTime } from "@/lib/format";
 import type { SavingsDepositDetailOut } from "@/lib/types";
@@ -61,9 +62,15 @@ export function SavingsDepositClient({
       <PageHeader title={deposit.plan_name} backHref={`/home/kids/${kidId}`} />
 
       <div className="px-5 pt-3.5 flex flex-col gap-4">
-        <div className="text-[12.5px] text-muted">
-          {Number(deposit.monthly_rate).toFixed(1)}%/month · ≈ {Number(deposit.annual_rate).toFixed(1)}%/year ·
-          opened {formatDateTime(deposit.opened_at)}
+        <div className="flex flex-col gap-1.5">
+          <SavingsKindBadge
+            locked={deposit.is_locked && !deposit.is_matured}
+            label={deposit.is_locked ? (deposit.is_matured ? "Unlocked" : "Locked") : "Flexible"}
+          />
+          <div className="text-[12.5px] text-muted">
+            {Number(deposit.monthly_rate).toFixed(1)}%/month · ≈ {Number(deposit.annual_rate).toFixed(1)}%/year ·
+            opened {formatDateTime(deposit.opened_at)}
+          </div>
         </div>
 
         <div className="text-center py-[18px] bg-card border border-border-hairline rounded-2xl">

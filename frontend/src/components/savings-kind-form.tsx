@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
+import { ConfirmSheet } from "@/components/ui/confirm-sheet";
 import { annualFromMonthly } from "@/lib/format";
 import type { SavingsPlanOut, SavingsPresetOut } from "@/lib/types";
 
@@ -34,6 +35,7 @@ export function SavingsKindForm({
   const kindPresets = presets.filter((p) => p.kind === kind);
   const inKind = (p: SavingsPlanOut) => (kind === "flexible" ? p.lock_months === 0 : p.lock_months > 0);
   const customPlans = plans.filter((p) => p.preset_key === null && inKind(p));
+  const openDeposits = plans.filter(inKind).reduce((n, p) => n + p.open_deposit_count, 0);
 
   const [name, setName] = useState("");
   const [rate, setRate] = useState(kind === "locked" ? 3.0 : 1.0);
@@ -41,6 +43,11 @@ export function SavingsKindForm({
   const [creating, setCreating] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<SavingsPlanOut | null>(null);
+  const [cashOutOpen, setCashOutOpen] = useState(false);
+  const [working, setWorking] = useState(false);
+
+  const kindWord = kind === "flexible" ? "flexible" : "locked";
 
   async function togglePreset(preset: SavingsPresetOut, on: boolean) {
     if (!session?.backendToken) return;
@@ -48,6 +55,20 @@ export function SavingsKindForm({
     setError(null);
     try {
       await api.post("/family/savings-presets", session.backendToken, { key: preset.key, active: on });
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Something went wrong");
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function toggleCustomActive(plan: SavingsPlanOut, on: boolean) {
+    if (!session?.backendToken) return;
+    setBusyKey(plan.id);
+    setError(null);
+    try {
+      await api.patch(`/family/savings-plans/${plan.id}`, session.backendToken, { is_active: on });
       router.refresh();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Something went wrong");
@@ -77,24 +98,33 @@ export function SavingsKindForm({
     }
   }
 
-  async function handleDelete(plan: SavingsPlanOut) {
-    if (!session?.backendToken) return;
-    const warning =
-      plan.open_deposit_count > 0
-        ? `${plan.open_deposit_count} deposit${plan.open_deposit_count === 1 ? "" : "s"} ${
-            plan.open_deposit_count === 1 ? "is" : "are"
-          } in this plan. Deleting it won't touch those savings — they keep growing at the same rate — you just can't add new money to it. Delete anyway?`
-        : `Delete "${plan.name}"?`;
-    if (!confirm(warning)) return;
-    setBusyKey(plan.id);
+  async function confirmDelete() {
+    if (!session?.backendToken || !deleteTarget) return;
+    setWorking(true);
     setError(null);
     try {
-      await api.delete(`/family/savings-plans/${plan.id}`, session.backendToken);
+      await api.delete(`/family/savings-plans/${deleteTarget.id}`, session.backendToken);
+      setDeleteTarget(null);
       router.refresh();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Something went wrong");
     } finally {
-      setBusyKey(null);
+      setWorking(false);
+    }
+  }
+
+  async function confirmCashOut() {
+    if (!session?.backendToken) return;
+    setWorking(true);
+    setError(null);
+    try {
+      await api.post("/family/savings/cash-out", session.backendToken, { kind });
+      setCashOutOpen(false);
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Something went wrong");
+    } finally {
+      setWorking(false);
     }
   }
 
@@ -119,7 +149,7 @@ export function SavingsKindForm({
       </div>
 
       <div className="flex flex-col gap-2.5">
-        <span className="text-[12px] font-semibold text-muted">Ready-made plans</span>
+        <span className="text-[12px] font-semibold text-muted">Recommended plans</span>
         {kindPresets.map((preset) => {
           const existing = plans.find((p) => p.preset_key === preset.key);
           const on = Boolean(existing?.is_active);
@@ -163,25 +193,31 @@ export function SavingsKindForm({
                 plan.is_active ? "" : "opacity-60"
               }`}
             >
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-semibold text-[14.5px] text-emerald-dark">{plan.name}</span>
-                <span className="text-[13px] font-semibold text-emerald">
-                  {Number(plan.monthly_rate).toFixed(1)}%/mo
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-2 text-[12px] text-muted">
-                <span>{termLabel(plan.lock_months)}</span>
-                <span>≈ {Number(plan.annual_rate).toFixed(1)}%/year</span>
-              </div>
-              {plan.open_deposit_count > 0 && (
-                <span className="text-[11.5px] text-muted">
-                  {plan.open_deposit_count} open deposit{plan.open_deposit_count === 1 ? "" : "s"}
-                </span>
-              )}
+              <label className="flex items-center justify-between gap-3 cursor-pointer">
+                <div>
+                  <div className="font-semibold text-[14.5px] text-emerald-dark">{plan.name}</div>
+                  <div className="text-[12px] text-muted">
+                    {termLabel(plan.lock_months)} · {Number(plan.monthly_rate).toFixed(1)}%/mo · ≈{" "}
+                    {Number(plan.annual_rate).toFixed(1)}%/year
+                  </div>
+                  {plan.open_deposit_count > 0 && (
+                    <div className="text-[11.5px] text-muted mt-0.5">
+                      {plan.open_deposit_count} open deposit{plan.open_deposit_count === 1 ? "" : "s"}
+                    </div>
+                  )}
+                </div>
+                <input
+                  type="checkbox"
+                  checked={plan.is_active}
+                  disabled={busyKey === plan.id}
+                  onChange={(e) => toggleCustomActive(plan, e.target.checked)}
+                  className="w-5 h-5 accent-emerald cursor-pointer shrink-0"
+                />
+              </label>
               <button
                 type="button"
                 disabled={busyKey === plan.id}
-                onClick={() => handleDelete(plan)}
+                onClick={() => setDeleteTarget(plan)}
                 className="self-start text-[12.5px] font-semibold text-negative cursor-pointer disabled:opacity-50 pt-1"
               >
                 Delete
@@ -271,6 +307,51 @@ export function SavingsKindForm({
           {creating ? "Creating…" : "Create plan"}
         </button>
       </div>
+
+      {openDeposits > 0 && (
+        <button
+          type="button"
+          onClick={() => setCashOutOpen(true)}
+          className="text-center min-h-11 py-[13px] rounded-xl text-[13.5px] font-semibold border border-brass-dark text-brass-dark cursor-pointer"
+        >
+          Cash out every {kindWord} deposit
+        </button>
+      )}
+
+      {deleteTarget && (
+        <ConfirmSheet
+          title={`Delete "${deleteTarget.name}"?`}
+          confirmLabel="Delete plan"
+          confirming={working}
+          onConfirm={confirmDelete}
+          onClose={() => setDeleteTarget(null)}
+          body={
+            deleteTarget.open_deposit_count > 0
+              ? `${deleteTarget.open_deposit_count} deposit${
+                  deleteTarget.open_deposit_count === 1 ? " is" : "s are"
+                } in this plan. Deleting it won't touch those savings — they keep growing at the same rate — your kid just can't add new money to it.`
+              : "This plan will be removed. You can always add it back later."
+          }
+        />
+      )}
+
+      {cashOutOpen && (
+        <ConfirmSheet
+          title={`Cash out every ${kindWord} deposit?`}
+          confirmLabel={`Cash out ${kindWord} savings`}
+          confirming={working}
+          onConfirm={confirmCashOut}
+          onClose={() => setCashOutOpen(false)}
+          body={
+            <>
+              Every {kindWord} savings deposit, for every kid, is closed right now and paid back
+              into their cash — interest included
+              {kind === "locked" ? ", even if the term isn't up yet" : ""}. Their plans stay set up
+              for next time.
+            </>
+          }
+        />
+      )}
     </div>
   );
 }

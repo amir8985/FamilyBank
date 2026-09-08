@@ -13,6 +13,8 @@ from app.schemas.savings import (
     SavingsDepositRequest,
     SavingsOverviewOut,
     SavingsPlanCreate,
+    SavingsCashOutRequest,
+    SavingsCashOutResult,
     SavingsPlanOut,
     SavingsPlanUpdate,
     SavingsPresetOut,
@@ -93,6 +95,18 @@ async def toggle_savings_preset(
     except savings_service.SavingsError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     await db.commit()
+
+
+@router.post("/family/savings/cash-out", response_model=SavingsCashOutResult)
+async def cash_out_savings(
+    body: SavingsCashOutRequest, family: Family = Depends(get_family), db: AsyncSession = Depends(get_db)
+) -> SavingsCashOutResult:
+    try:
+        result = await savings_service.cash_out_kind(db, family, body.kind)
+    except savings_service.SavingsError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    await db.commit()
+    return SavingsCashOutResult(**result)
 
 
 @router.patch("/family/savings-plans/{plan_id}", response_model=SavingsPlanOut)

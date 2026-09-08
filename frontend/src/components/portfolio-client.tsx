@@ -8,6 +8,7 @@ import { TickerBadge } from "@/components/ui/ticker-badge";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Money } from "@/components/ui/money";
 import { SavingsDepositSheet } from "@/components/savings-deposit-sheet";
+import { SavingsKindBadge } from "@/components/ui/savings-badge";
 import { api, ApiError } from "@/lib/api";
 import { formatMoney, formatPct, trimUnits } from "@/lib/format";
 import type { AssetOut, DepositablePlanOut, PortfolioOut, SavingsOverviewOut } from "@/lib/types";
@@ -140,9 +141,9 @@ export function PortfolioClient({
                   href={`/home/kids/${kidId}/savings/${d.deposit_id}`}
                   className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex items-center justify-between"
                 >
-                  <div>
+                  <div className="flex flex-col items-start gap-1">
                     <div className="font-semibold text-[15px] text-emerald-dark">{d.plan_name}</div>
-                    <div className="text-[12.5px] text-muted">{unlockLabel(d)}</div>
+                    <SavingsKindBadge locked={d.is_locked && !d.is_matured} label={unlockLabel(d)} />
                   </div>
                   <div className="text-right">
                     <div className="font-semibold text-[15px] text-emerald-dark">

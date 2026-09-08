@@ -43,7 +43,7 @@ class SavingsError(ValueError):
 # does NOT retro-change plans already switched on (they're their own
 # rows, and every deposit snapshots its terms regardless).
 PRESET_PLANS: list[dict] = [
-    {"key": "flex", "name": "Everyday savings", "monthly_rate": Decimal("1.0"), "lock_months": 0},
+    {"key": "flex", "name": "Flexible plan", "monthly_rate": Decimal("1.0"), "lock_months": 0},
     {"key": "locked-1m", "name": "1-month plan", "monthly_rate": Decimal("1.5"), "lock_months": 1},
     {"key": "locked-3m", "name": "3-month plan", "monthly_rate": Decimal("2.0"), "lock_months": 3},
     {"key": "locked-6m", "name": "6-month plan", "monthly_rate": Decimal("2.5"), "lock_months": 6},
@@ -315,6 +315,34 @@ async def create_deposit(
     return deposit
 
 
+async def _close_deposit(
+    session: AsyncSession, deposit: SavingsDeposit, family_currency: str, now: datetime
+) -> Decimal:
+    """Closes one deposit and pays its current value to the kid's cash
+    ledger. Returns the payout in family currency. Caller is responsible
+    for the maturity check (a normal kid withdrawal enforces it; a
+    parent cash-out overrides it)."""
+    native_value = deposit_value(deposit, now).quantize(_CENTS, rounding=ROUND_HALF_UP)
+    payout = await fx_service.convert(session, native_value, deposit.currency, family_currency)
+    payout = payout.quantize(_CENTS, rounding=ROUND_HALF_UP)
+
+    await debts_db_service.record_transaction(
+        session,
+        deposit.kid_id,
+        DebtTransactionType.ADD,
+        payout,
+        note=f"Savings payout ({deposit.plan_name})",
+        is_savings=True,
+    )
+
+    deposit.is_open = False
+    deposit.closed_at = now
+    deposit.close_value = native_value
+    deposit.close_currency = deposit.currency
+    await session.flush()
+    return payout
+
+
 async def withdraw_deposit(
     session: AsyncSession, kid: Kid, deposit_id: uuid.UUID, family_currency: str
 ) -> SavingsDeposit:
@@ -330,22 +358,34 @@ async def withdraw_deposit(
     if not is_matured(deposit, now):
         raise SavingsError("This deposit is locked until it matures")
 
-    native_value = deposit_value(deposit, now).quantize(_CENTS, rounding=ROUND_HALF_UP)
-    payout = await fx_service.convert(session, native_value, deposit.currency, family_currency)
-    payout = payout.quantize(_CENTS, rounding=ROUND_HALF_UP)
-
-    await debts_db_service.record_transaction(
-        session,
-        kid.id,
-        DebtTransactionType.ADD,
-        payout,
-        note=f"Savings payout ({deposit.plan_name})",
-        is_savings=True,
-    )
-
-    deposit.is_open = False
-    deposit.closed_at = now
-    deposit.close_value = native_value
-    deposit.close_currency = deposit.currency
-    await session.flush()
+    await _close_deposit(session, deposit, family_currency, now)
     return deposit
+
+
+async def cash_out_kind(session: AsyncSession, family, kind: str) -> dict:
+    """Parent action: close every open deposit of one kind (flexible or
+    locked) for every kid in the family, paying each back to that kid's
+    cash. Overrides the maturity lock on locked deposits — it's the
+    parent's own money to release. Lets a parent empty out a plan they
+    want to retire without hunting down each kid's deposit."""
+    if kind not in ("flexible", "locked"):
+        raise SavingsError("kind must be 'flexible' or 'locked'")
+
+    now = datetime.now(timezone.utc)
+    kid_ids = list(await session.scalars(select(Kid.id).where(Kid.family_id == family.id)))
+    if not kid_ids:
+        return {"closed_count": 0, "total_paid": Decimal("0.00"), "currency": family.base_currency}
+
+    stmt = select(SavingsDeposit).where(
+        SavingsDeposit.kid_id.in_(kid_ids), SavingsDeposit.is_open
+    )
+    stmt = stmt.where(
+        SavingsDeposit.lock_months == 0 if kind == "flexible" else SavingsDeposit.lock_months > 0
+    )
+    deposits = list(await session.scalars(stmt))
+
+    total = Decimal("0.00")
+    for deposit in deposits:
+        total += await _close_deposit(session, deposit, family.base_currency, now)
+
+    return {"closed_count": len(deposits), "total_paid": total, "currency": family.base_currency}
