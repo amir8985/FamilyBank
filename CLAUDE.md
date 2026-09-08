@@ -31,229 +31,169 @@ backend/    FastAPI + SQLAlchemy + Postgres (Neon) — see backend/README.md
 frontend/   Next.js 16 (App Router) + Tailwind v4 — see frontend/README.md
 ```
 
-## Status as of 2026-09-07 — savings plans (backend v1.7.0 / frontend v0.8.0)
 
-**Built, tested, and verified live on branch `savings-plans` (cut from
-`9a06555`, which is `origin/master` — the stock-boost feature is already
-on master). NOT yet pushed / merged — that's gated on explicit user
-confirmation per this project's rules.**
+## Status as of 2026-09-08 — savings plans (backend v1.7.0 / frontend v0.8.0)
 
-What it is: parents define **savings plans** a kid can move cash into.
-One unified model — a plan is *flexible* (`lock_months == 0`, withdraw
-any time) or *locked* (`lock_months > 0`, no withdrawal until it
-matures, then it keeps compounding at the same rate until withdrawn).
-Rate is a monthly percentage, compounded daily on read.
+**Done, reviewed, tested. On branch `savings-plans` (cut from `9a06555` =
+`origin/master`). Push / merge to `master` is gated on explicit user
+confirmation per this project's rules — check whether that's happened
+before assuming it's live.**
 
-- **Deliberately one model, not two** (this was a mid-design call by the
-  user): the parent only *creates and deletes* plans. Every
-  `SavingsDeposit` **snapshots** its plan's `plan_name` / `monthly_rate`
-  / `lock_months` at deposit time, so editing or deleting the parent's
-  `SavingsPlan` never changes money already in it (`plan_id` is
-  `ON DELETE SET NULL`; the snapshot columns are what actually drive
-  display + math). The settings UI warns the parent with the
-  open-deposit count before a delete.
-- **`savings_service` is stateless like `boost_service`** — a deposit's
-  value is `principal * (1 + rate/100) ** (elapsed_days / 30.4375)`,
-  recomputed every read, no accrued-interest column, no cron job. Only
-  ever grows (no down-ticks), so it's a plain compounding curve, not a
-  tick walk. `DAYS_PER_MONTH = 30.4375` (= 365.25/12, matches
-  `boost_service`'s `HOURS_PER_MONTH`).
-- **Deposits are whole-only** (user's call): a withdrawal closes the
-  entire deposit and pays principal + accrued interest back to the cash
-  ledger via a `debt_transactions` row with the new **`is_savings`**
-  flag (migration `0012`, `server_default false` — same safe pattern as
-  `is_investment`; history shows "Moved to savings" / "Savings payout").
-- **Migration `0012`** (`0011 → 0012`; shared dev DB is on it): adds
-  `savings_plans`, `savings_deposits`, `debt_transactions.is_savings`.
-  Checked `alembic current` against the shared DB + every sibling
-  worktree's `versions/` before taking `0012` — nothing else had it in
-  flight.
-- **Routes** (`routes_savings.py`, new): `GET/POST /family/savings-plans`,
-  `PATCH/DELETE /family/savings-plans/{id}`; `GET /kids/{id}/savings`,
-  `POST /kids/{id}/savings/deposit`, `POST /kids/{id}/savings/{id}/withdraw`,
-  `GET /kids/{id}/savings/{id}`. `PortfolioOut` gained `savings_value`.
-- **Frontend**: Settings page — Kids list moved **below** the "Advanced
-  investing & savings" link. Hub savings settings — **see the "Second
-  round" bullet below for the current shape** (this first pass had a
-  single `/savings-plans` screen; it was split into flexible/locked +
-  presets before commit). Live **compounded** "≈ X%/year" hint —
-  `annualFromMonthly` in `lib/format.ts` mirrors
-  `savings_service.annual_rate` (2%/mo shows ~26.8%/yr, not 24%). Kid
-  portfolio: header → "{Name}'s Investments &
-  Savings"; segments **Portfolio / Invest / Save**; Portfolio tab shows
-  a **Savings** section above **Investments**; "Sell everything" →
-  **"Sell all investments for $X"** (+ its `confirm()` now says savings
-  aren't affected). New **Save** tab lists depositable plans →
-  `SavingsDepositSheet`. New `/home/kids/[kidId]/savings/[depositId]`
-  detail page (value, chart reusing `LotChart`, lock status + unlock
-  date, withdraw button — disabled "Locked for now" until maturity).
-- **Verified**: full backend suite 118 passed (was 101; +17 in
-  `test_savings_service.py` / `test_savings_plans.py`). `npm run
-  build` + `npm run lint` clean. Live-tested with Playwright against a
-  real dev server + the synthetic test family (minted NextAuth cookie
-  per the "Lessons learned" recipe): created plans via the form,
-  deposited into flexible + locked, opened both detail pages, withdrew
-  the flexible one (cash round-tripped correctly), confirmed the locked
-  one blocks withdrawal — zero console errors.
-- **Ghost-port bug bit again**: port 8098 (this worktree's backend per
-  `.env` at session start) had two listeners — a real one and an
-  unkillable ghost from a prior session serving stale code (openapi had
-  no savings routes). Moved the whole stack to **8099** (updated
-  `frontend/.env.local`, restarted both servers). If backend calls 404
-  on savings routes, check `netstat` for a ghost on the configured port
-  before assuming a code problem.
-- **Second round (same session, user feedback): split + presets.** The
-  single "Savings plans" settings screen was split into **two** — the
-  hub now has separate "Flexible savings" and "Locked savings" cards,
-  each with its own `Active` pill (true if ≥1 active plan of that kind)
-  and its own page at `/home/settings/investing/savings/[kind]`
-  (`kind` = `flexible` | `locked`, one shared `SavingsKindForm`
-  component). Each page leads with **ready-made preset plans** the
-  parent switches on/off with a checkbox — they don't have to invent
-  one. Presets live in `savings_service.PRESET_PLANS` (code, not
-  seeded): flexible "Everyday savings" 1%/mo; locked 1mo/1.5%,
-  3mo/2%, 6mo/2.5%, 12mo/3%. Migration `0013` adds
-  `savings_plans.preset_key` (NULL = a custom plan the parent typed).
-  `POST /family/savings-presets` `{key, active}` toggles one:
-  activating creates-or-reactivates the family's plan row for that
-  key; deactivating **deletes** the row if empty, or just flips
-  `is_active=false` if a kid still has money in it (their deposit keeps
-  growing regardless). `GET /family/savings-presets` is the static
-  catalog. Custom "Add your own" form is still there under the presets,
-  now kind-scoped (no lock stepper on the flexible page; locked
-  defaults 6 months / 3%). Kid's Save tab groups plans under
-  **Flexible** / **Locked** headings. 21 savings tests pass, full
-  suite green, build/lint clean, re-verified live with Playwright
-  (toggled presets on both pages, confirmed hub pills + kid Save tab).
-- **Third round (same session, more feedback):**
-  - **Custom in-app confirm sheet** (`components/ui/confirm-sheet.tsx`,
-    `ConfirmSheet`) replaces `window.confirm()` for savings actions —
-    amber-toned (new `--color-tint-brass` / `--color-brass-dark` tokens,
-    derived from the existing `--color-brass` accent), calmer than
-    `SellAndRebuySheet`'s red. Used for plan-delete and the new
-    cash-out.
-  - **Bulk cash-out**: `POST /family/savings/cash-out` `{kind}` closes
-    every open deposit of that kind (flexible / locked), for every kid,
-    paying each back to that kid's cash — **overrides the maturity lock
-    on locked deposits** (parent's own money to release). Button shows
-    on each kind's settings page only when that kind has open deposits.
-    `savings_service._close_deposit` is the shared helper (normal
-    withdraw enforces maturity, cash-out doesn't).
-  - Preset section heading "Ready-made plans" → **"Recommended plans"**.
-  - The flexible preset renamed "Everyday savings" → **"Flexible plan"**
-    (preset_key stays `flex`, so already-activated rows are unaffected
-    until re-toggled).
-  - Custom ("Your own") plans now have an **activate checkbox** too
-    (was delete-only) — just a `PATCH {is_active}`.
-  - Kid portfolio + deposit-detail: locked vs flexible deposits get a
-    small tinted padlock pill (`components/ui/savings-badge.tsx`,
-    `SavingsKindBadge` — closed padlock + amber for locked, open
-    padlock + emerald for flexible/unlocked).
-  - No new migration this round. 13 `test_savings_plans` + 10
-    `test_savings_service` pass; build/lint clean; re-verified live
-    (amber sheets, cash-out actually emptied the deposits, badges
-    render).
-- **Fourth round (same session):**
-  - **Kind settings pages are now a staged form.** Preset + custom-plan
-    checkboxes only change local state; a **"Save changes"** button
-    (appears when dirty) commits them. On Save, if any change switches
-    OFF a plan a kid still has money in, `SavingsChangesSheet` (amber)
-    opens with a per-kid breakdown (`GET
-    /family/savings-plans/{id}/deposits`) and two choices: **"Cash out &
-    turn off"** (`POST /family/savings-plans/{id}/cash-out` per affected
-    plan, then apply) or **"Turn off, keep the savings"**. Staged state
-    resets via the adjust-state-during-render pattern when the server
-    `plans` signature changes after refresh.
-  - The page-wide "Cash out every X deposit" button from round 3 was
-    **removed** (user didn't want it) — cash-out is now only per-plan,
-    surfaced inside the Save confirm sheet. `savings_service.cash_out_kind`
-    → `cash_out_plan`; added `plan_deposit_breakdown`.
-  - A plan that's **off but still holds deposits** shows an orange,
-    tap-to-explain **`StillGrowingBadge`** ("N still saving") instead of
-    the plain muted text — same tap-to-reveal idea as the boost badge.
-    The hub's kind card shows an orange **"Savings still growing"** pill
-    (vs. green "Active") in the same situation.
-  - Delete still uses its own immediate `ConfirmSheet` (that already had
-    a popup — round-1 point was only about the checkboxes).
-  - `plan_deposit_breakdown`'s Kid-name lookup: `session.execute(...)`
-    returns a `Result`, not subscriptable — must iterate it into a dict
-    (`{k: v for k, v in await session.execute(...)}`), don't `dict(...)`
-    it directly.
-- **Fifth round (frontend only, no backend/migration change):**
-  - The kind settings pages' **"Save changes" button is now a sticky bar
-    pinned to the top** of the scroll area (only when there are staged
-    changes) — the user wanted it visible without scrolling.
-  - The pre-save confirm gate is **gone**. Save just applies the toggle
-    changes; then, if any switched-off plan of that kind still holds a
-    deposit, `SavingsLeftoversSheet` (renamed from `SavingsChangesSheet`)
-    opens as a **post-save** prompt listing each such plan with a per-kid
-    breakdown and two buttons per plan — **"Cash out"** (`POST
-    /family/savings-plans/{id}/cash-out`) or **"Switch back on"**
-    (`POST /family/savings-presets` for a preset, `PATCH
-    {is_active:true}` for a custom plan) — plus "Done". This is the
-    **only** place cash-out is offered now (no standalone button on the
-    page). To find the leftovers after Save, it re-fetches
-    `/family/savings-plans` directly rather than waiting out
-    `router.refresh()`.
-  - The hub's orange **"Savings still growing"** pill is now a tappable
-    `HubStillGrowingBadge` — tap reveals a one-liner, same pattern as
-    the boost badge / the per-plan `StillGrowingBadge`.
-- **Sixth round (frontend only):**
-  - **Every** plan card in the kind settings pages now shows a
-    deposit-count marker when it has open deposits — `PlanDepositMarker`
-    (renamed/generalised from `StillGrowingBadge`): a plain emerald
-    "N deposits" pill for an active plan, the orange tap-to-explain
-    "N still saving" for a switched-off one.
-  - Fixed the "still growing" copy (both the per-plan badge and the
-    hub's `HubStillGrowingBadge`): a leftover deposit is redeemed by the
-    **kid from their own savings screen**, not from Settings — and a
-    **locked** one only once its term is up. (The post-save
-    `SavingsLeftoversSheet` is the only place Settings can act on one,
-    and only in that moment.)
-- **Seventh round (frontend only) — user reversed the round-6 stance:**
-  a switched-off plan card that still has deposits now shows a small
-  outlined **"Cash out"** button next to its "N still saving" marker.
-  Tapping it fetches the per-kid breakdown and opens an amber
-  `ConfirmSheet` ("Cash out '<name>'?" → "Cash out now"), which calls
-  the existing `POST /family/savings-plans/{id}/cash-out` (overrides the
-  lock for a locked plan — the confirm copy says so). Copy on the
-  per-plan badge + hub badge updated to say the parent *can* cash it out
-  from settings again, alongside the kid's own withdrawal.
-- **Eighth round (frontend only):**
-  - Hub savings cards now show up to two status pills: a **brass
-    "Deactivated"** (kind has plans but none switched on) and a
-    **red "N still growing"** (leftover deposits in a switched-off plan)
-    — the "still growing" one moved from brass to red
-    (`tint-negative`/`negative`) so it reads as more urgent than plain
-    "Deactivated". Both tap to explain. `hub-still-growing.tsx` →
-    `hub-savings-badges.tsx` (`HubDeactivatedBadge` +
-    `HubStillGrowingBadge`). The per-plan `PlanDepositMarker`'s
-    inactive "N still saving" pill went red to match.
-  - **The post-save leftovers sheet now only fires for a plan *this
-    save* switched off** that has deposits — `turnedOffWithDeposits()`
-    computed from staged-vs-server before applying, replacing the old
-    "re-scan every off-with-deposits plan" (`loadLeftovers`). Turning a
-    *different* plan on and saving no longer pops an alert about a
-    pre-existing switched-off plan.
-- **Ninth round — React duplicate-key bug fix:**
-  `savings_service.plan_deposit_breakdown` returned one row *per open
-  deposit*, so a kid with two deposits in the same plan produced two
-  rows with the same `kid_id` → "Encountered two children with the same
-  key" in `SavingsLeftoversSheet` / the cash-out ConfirmSheet (both key
-  by `d.kid_id`). Now aggregates per kid (values summed, one row). No
-  API-shape change; new test
-  `test_plan_deposits_breakdown_sums_a_kids_multiple_deposits_into_one_row`.
-- **Tenth round:** the hub "Deactivated" pill was gated on
-  `hasAnyPlan` (kind has ≥1 plan row), so a family with **zero** plans
-  of that kind saw no badge at all. Now it shows whenever the kind
-  isn't active — you can always switch a recommended preset on, so
-  "Deactivated" is the right read even with nothing configured.
-- **Deferred, still**: "interest from parent" as a *separate* flat
-  cash-balance rate — this savings-plans feature is the more general
-  version of that idea, so it may now be moot; confirm with the user
-  before building it.
-- **Not done (needs user confirmation)**: push `savings-plans`, merge to
-  `master`, cut the next branch.
+### What it is
+
+Parents define **savings plans** a kid can move cash into; the money
+compounds at a fixed monthly rate. One unified model — a plan is
+**flexible** (`lock_months == 0`, withdraw any time) or **locked**
+(`lock_months > 0`, no withdrawal until it matures, then keeps
+compounding at the same rate until withdrawn). Settings live under
+Settings → *Advanced investing & savings* → *Flexible savings* /
+*Locked savings* (two separate screens). The kid sees savings on their
+portfolio screen (now "Investments & **Savings**", tabs
+**Portfolio / Invest / Save**).
+
+### Key decisions (why it's shaped this way)
+
+- **One `savings_plans` model, not "flexible rate + locked plans"
+  separately** — a mid-design call by the user. The parent only
+  creates / deletes / switches plans on and off. Every `SavingsDeposit`
+  **snapshots** its plan's `plan_name` / `monthly_rate` / `lock_months`
+  at deposit time, so editing or deleting the `SavingsPlan` never
+  changes money already in it. `savings_deposits.plan_id` is
+  `ON DELETE SET NULL`; the snapshot columns drive all display + math.
+- **`savings_service` is stateless, exactly like `boost_service`** — a
+  deposit's value is `principal * (1 + rate/100) ** (elapsed_days /
+  DAYS_PER_MONTH)`, recomputed on every read, no accrued-interest
+  column, no cron job. Interest only ever grows (no down-ticks), so
+  it's a plain compounding curve, not a tick walk. `DAYS_PER_MONTH =
+  30.4375` (= 365.25/12; matches `boost_service`'s `HOURS_PER_MONTH`).
+- **Withdrawals are whole-deposit-only** (user's call) — closes the
+  deposit and pays principal + accrued interest to the cash ledger via
+  a `debt_transactions` row with the new **`is_savings`** flag (history
+  shows "Moved to savings" / "Savings payout").
+- **Recommended presets** (`savings_service.PRESET_PLANS`, code not
+  seeded): flexible "Flexible plan" 1%/mo; locked 1mo/1.5%, 3mo/2%,
+  6mo/2.5%, 12mo/3%. A parent switches one on with a checkbox → it
+  creates (or reactivates) a `SavingsPlan` row carrying `preset_key`.
+  Changing a preset constant here does **not** retro-change rows
+  already switched on.
+- **Settings pages are a staged form.** Checkboxes only stage; a
+  **sticky "Save changes" bar at the top** commits. If a save switches
+  **off** a plan *this save* left holding a deposit, `SavingsLeftoversSheet`
+  opens afterward with a per-kid breakdown and, per plan, *Cash out* /
+  *Switch back on*. A save that only turns plans **on** never pops that
+  sheet.
+- **Cash-out** (`POST /family/savings-plans/{id}/cash-out`) closes every
+  open deposit in one plan across all kids, back to their cash —
+  **overrides the maturity lock on locked deposits** (parent's own
+  money to release). Reachable from a switched-off plan card's "Cash out
+  these savings" button and from the leftovers sheet. There is no
+  page-wide "cash out everything" button (removed at user request).
+- **Parent confirms use `ConfirmSheet`** (amber in-app sheet, new
+  `--color-tint-brass` / `--color-brass-dark` tokens) not `window.confirm()`.
+  The kid-side withdraw still uses native `confirm()` — consistent with
+  the rest of the portfolio/kid surface (`handleSellEverything`).
+- **Hub status pills** per savings kind: green **Active** (a plan is on),
+  brass **Deactivated** (no plan on, whether or not any exist), red
+  **N still growing** (leftover deposits in a switched-off plan — redder
+  because there's real money at stake). All three tap to explain.
+- **`annual_rate` / `annualFromMonthly`** show the *compounded* yearly
+  equivalent next to every monthly rate (2%/mo ≈ 26.8%/yr, not 24%).
+  Backend `savings_service.annual_rate` and frontend `lib/format.ts`
+  must stay in sync.
+
+### Migrations
+
+- `0012_savings_plans` (`0011 → 0012`): `savings_plans`,
+  `savings_deposits`, `debt_transactions.is_savings` (`server_default
+  "false"` — the `is_investment` lesson).
+- `0013_savings_plan_preset_key` (`0012 → 0013`): `savings_plans.preset_key`.
+- Shared dev DB is on `0013`. Checked `alembic current` + every sibling
+  worktree's `versions/` before taking each number.
+
+### Files
+
+- Backend: `models/savings.py`, `schemas/savings.py`,
+  `services/savings_service.py`, `api/routes_savings.py` (registered in
+  `main.py`), `+is_savings` threaded through `debt_transaction` /
+  `debts_db_service` / `routes_debt` / `schemas/debt`,
+  `investing_service.get_portfolio` adds `savings_value` to `PortfolioOut`.
+- Frontend: `savings-kind-form.tsx` (the big one),
+  `savings-leftovers-sheet.tsx`, `savings-deposit-sheet.tsx`,
+  `savings-deposit-client.tsx`, `ui/confirm-sheet.tsx`,
+  `ui/plan-deposit-marker.tsx`, `ui/hub-savings-badges.tsx`,
+  `ui/savings-badge.tsx`; routes
+  `home/settings/investing/savings/[kind]/` and
+  `home/kids/[kidId]/savings/[depositId]/`; edits to
+  `settings/investing/page.tsx`, `settings-form.tsx`,
+  `portfolio-client.tsx`, `kids/[kidId]/page.tsx`,
+  `kids/[kidId]/history/page.tsx`, `lib/format.ts`, `lib/types.ts`,
+  `globals.css`.
+
+### Verified
+
+- Backend suite **127 passed** (was 101; +26 across
+  `test_savings_service.py` / `test_savings_plans.py`).
+- `npm run build` + `npm run lint` + `tsc --noEmit` clean.
+- Live-tested with Playwright against the dev server + synthetic test
+  family at every feedback round: create/toggle/delete plans, presets,
+  deposit into flexible + locked, per-plan cash-out (incl. locked
+  override), the staged-save + leftovers flow, deposit detail + kid
+  withdraw, the hub pills and their explanations. Zero console errors.
+
+### Known gaps / follow-ups (not bugs to fix now)
+
+1. **The home screen does not show savings.** A kid who moves $100
+   cash → savings shows $100 less cash on `/home` and the savings
+   appears nowhere there (only on their detail page: the "$X saved"
+   subline + Savings section). Fixing means adding `savings_value` to
+   `KidSummary` / `FamilyHome` + `get_family_home` + home rendering —
+   a real chunk with a UI decision (where on the kid card?). **This is
+   the #1 follow-up.**
+2. `POST .../savings/deposit` and `.../withdraw` re-fetch the full
+   deposit detail (incl. a 40-point chart series) after the mutation;
+   the frontend discards both responses. Minor wasted compute on a
+   rare action.
+3. Mixed-currency summation in `build_overview` / `savings_value` /
+   `plan_deposit_breakdown` if the scheduler hasn't cached an FX rate
+   for a deposit's currency — matches the existing `investing_service`
+   tolerance (it just uses the native amount). Real only right after a
+   family changes to a brand-new currency.
+4. `SavingsDepositSheet`'s pre-deposit "Locked until about <date>" uses
+   calendar-month math while the backend uses 30.4375-day math — off by
+   a day or two; copy says "about" and the detail page shows the
+   authoritative `matures_at`.
+
+### Non-obvious things the next session needs to know
+
+- **`plan_deposit_breakdown` must aggregate per kid, not per deposit.**
+  It returns one row per kid (deposits summed). A kid with two deposits
+  in the same plan → one row. The `SavingsLeftoversSheet` and the
+  cash-out `ConfirmSheet` both key their lists by `d.kid_id`; per-deposit
+  rows caused a React "two children with the same key" error.
+- **`savings-kind-form.tsx` staged-state reset** uses the
+  adjust-state-during-render pattern (`if (sig !== lastSig) { setLastSig;
+  setOverride({}) }`) — this is React's documented approach; do not
+  "fix" it into a `useEffect` (trips this project's lint rule anyway).
+- **`investing_service` imports `savings_service`** (for `savings_value`
+  in `get_portfolio`). `savings_service` imports `debts_db_service` /
+  `fx_service` only — no cycle. Keep it that way.
+- **Ghost-port bug recurred repeatedly this session.** The worktree's
+  backend port drifted 8098 → 8099 → 8100 chasing unkillable stale
+  listeners (`netstat` shows two PIDs `LISTEN`ing on one port; one
+  serves old code). `frontend/.env.local` currently points at **8100**.
+  If backend routes 404 or serve stale shapes, check `netstat` /
+  `Get-NetTCPConnection` for a ghost before assuming a code bug, and
+  move to a fresh port + restart both servers.
+
+### Iteration log (condensed — 10 feedback rounds)
+
+Split single screen → flexible/locked + presets → in-app confirm sheet
+→ per-plan cash-out (kind-level removed) → staged Save + post-save
+leftovers sheet → deposit-count marker on every plan + accurate copy →
+per-plan Cash-out button on off plans → hub Deactivated pill + redder
+"still growing" + scoped the save alert → React dup-key fix (breakdown
+per kid) → Deactivated pill shows with zero plans. Full detail is in
+git log for `savings-plans`.
 
 ## Status as of 2026-09-07 — stock boost feature merged to worktree's branch (backend v1.6.0 / frontend v0.7.0)
 

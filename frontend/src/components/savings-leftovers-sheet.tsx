@@ -34,9 +34,9 @@ export function SavingsLeftoversSheet({
       </div>
 
       <p className="text-[13px] text-muted leading-relaxed -mt-1">
-        No new money can go into {leftovers.length === 1 ? "this plan" : "these plans"}, but what&apos;s
-        already in {leftovers.length === 1 ? "it keeps" : "them keeps"} earning interest. Cash it out,
-        or switch the plan back on.
+        {leftovers.length === 1
+          ? "No new money can go into this plan, but what's already in it keeps earning interest. Cash it out, or switch the plan back on."
+          : "No new money can go into these plans, but what's already in them keeps earning interest. Cash each out, or switch it back on."}
       </p>
 
       <div className="flex flex-col gap-3">

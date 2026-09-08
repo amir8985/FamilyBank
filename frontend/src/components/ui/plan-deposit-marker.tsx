@@ -5,7 +5,7 @@ import { useState } from "react";
 /** Small marker on a savings-plan card showing how many open deposits
  * ("pots") it holds.
  *  - active plan  → plain emerald count pill.
- *  - switched-off plan that still holds money → orange, tap to reveal a
+ *  - switched-off plan that still holds money → red, tap to reveal a
  *    one-liner. A parent can force it closed with the card's Cash out
  *    button; otherwise the kid withdraws it from their own savings
  *    screen (a locked one only once its term is up). */
@@ -39,7 +39,7 @@ export function PlanDepositMarker({
         onClick={() => setOpen((v) => !v)}
         className="text-[10px] font-semibold text-negative bg-tint-negative rounded-full px-1.5 py-0.5 cursor-pointer"
       >
-        {count} still saving
+        {count} still growing
       </button>
       {open && (
         <span className="text-[11.5px] text-negative leading-relaxed bg-tint-negative/60 rounded-lg px-2.5 py-1.5 max-w-[280px]">

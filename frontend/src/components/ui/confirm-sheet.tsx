@@ -4,9 +4,9 @@ import { BottomSheet } from "@/components/ui/bottom-sheet";
 
 /** Amber-toned confirmation sheet — our in-app replacement for a bare
  * browser confirm() on savings actions that shuffle real balances
- * around (deleting a plan that has deposits, cashing a whole kind out).
- * Deliberately calmer than SellAndRebuySheet's red: this is a "are you
- * sure" nudge, not a warning. */
+ * around (deleting a plan, cashing a plan's deposits out). Deliberately
+ * calmer than SellAndRebuySheet's red: this is an "are you sure" nudge,
+ * not a warning. */
 export function ConfirmSheet({
   title,
   body,

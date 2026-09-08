@@ -75,7 +75,8 @@ async def create_savings_plan(
     db.add(plan)
     await db.commit()
     await db.refresh(plan)
-    return await _plan_out(db, plan)
+    # A brand-new plan has no deposits — skip the aggregate count query.
+    return await _plan_out(db, plan, counts={})
 
 
 @router.get("/family/savings-presets", response_model=list[SavingsPresetOut])

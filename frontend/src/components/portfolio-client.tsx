@@ -130,9 +130,7 @@ export function PortfolioClient({
       <div className="flex-1 px-5 pt-2 pb-6 flex flex-col gap-2.5">
         {tab === "holdings" && (
           <>
-            {(hasSavings || hasInvestments) && (
-              <h2 className="font-serif font-semibold text-[15px] text-emerald-dark pt-1">Savings</h2>
-            )}
+            <h2 className="font-serif font-semibold text-[15px] text-emerald-dark pt-1">Savings</h2>
             {savings.deposits.map((d) => {
               const interest = Number(d.accrued_interest);
               return (

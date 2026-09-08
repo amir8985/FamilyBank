@@ -22,7 +22,8 @@ function lockStatus(deposit: SavingsDepositDetailOut): { locked: boolean; text: 
     day: "numeric",
     year: "numeric",
   });
-  const left = days < 31 ? `${days} day${days === 1 ? "" : "s"}` : `${Math.round(days / 30.44)} months`;
+  const months = Math.round(days / 30.44);
+  const left = days < 31 ? `${days} day${days === 1 ? "" : "s"}` : `${months} month${months === 1 ? "" : "s"}`;
   return { locked: true, text: `Locked until ${when} · ${left} left` };
 }
 
@@ -93,7 +94,7 @@ export function SavingsDepositClient({
 
         <div
           className={`text-center text-[12.5px] rounded-2xl py-3 ${
-            status.locked ? "bg-tint-negative text-negative" : "bg-cream text-muted"
+            status.locked ? "bg-tint-brass text-brass-dark" : "bg-cream text-muted"
           }`}
         >
           {deposit.is_open ? status.text : `Withdrawn ${deposit.closed_at ? formatDateTime(deposit.closed_at) : ""}`}

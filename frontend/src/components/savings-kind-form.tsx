@@ -65,11 +65,15 @@ export function SavingsKindForm({
   const [lockMonths, setLockMonths] = useState(6);
   const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Separate from `saving` (the sticky toggle-Save bar) so a delete /
+  // cash-out running in a modal doesn't make the Save bar say "Saving…".
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SavingsPlanOut | null>(null);
   const [leftovers, setLeftovers] = useState<LeftoverPlan[] | null>(null);
   const [leftoverBusy, setLeftoverBusy] = useState<string | null>(null);
   const [cashOutTarget, setCashOutTarget] = useState<LeftoverPlan | null>(null);
+  const [openingCashOut, setOpeningCashOut] = useState<string | null>(null);
 
   function stagePreset(key: string, on: boolean) {
     setOverride((o) => ({ ...o, [`preset:${key}`]: on }));
@@ -165,7 +169,7 @@ export function SavingsKindForm({
 
   async function confirmDelete() {
     if (!token || !deleteTarget) return;
-    setSaving(true);
+    setBusy(true);
     setError(null);
     try {
       await api.delete(`/family/savings-plans/${deleteTarget.id}`, token);
@@ -174,7 +178,7 @@ export function SavingsKindForm({
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Something went wrong");
     } finally {
-      setSaving(false);
+      setBusy(false);
     }
   }
 
@@ -203,7 +207,8 @@ export function SavingsKindForm({
   }
 
   async function openCashOut(plan: SavingsPlanOut) {
-    if (!token) return;
+    if (!token || openingCashOut) return;
+    setOpeningCashOut(plan.id);
     setError(null);
     try {
       const deposits = await api.get<PlanDepositOut[]>(
@@ -213,12 +218,14 @@ export function SavingsKindForm({
       setCashOutTarget({ plan, deposits });
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Something went wrong");
+    } finally {
+      setOpeningCashOut(null);
     }
   }
 
   async function confirmCashOut() {
     if (!token || !cashOutTarget) return;
-    setSaving(true);
+    setBusy(true);
     setError(null);
     try {
       await api.post(`/family/savings-plans/${cashOutTarget.plan.id}/cash-out`, token);
@@ -227,14 +234,14 @@ export function SavingsKindForm({
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Something went wrong");
     } finally {
-      setSaving(false);
+      setBusy(false);
     }
   }
 
   const planExtras = (plan: SavingsPlanOut | undefined) => {
     if (!plan || plan.open_deposit_count === 0) return null;
     return (
-      <div className="flex flex-wrap items-start gap-2">
+      <>
         <PlanDepositMarker
           count={plan.open_deposit_count}
           active={plan.is_active}
@@ -244,13 +251,14 @@ export function SavingsKindForm({
         {!plan.is_active && (
           <button
             type="button"
+            disabled={openingCashOut === plan.id}
             onClick={() => openCashOut(plan)}
-            className="text-[10px] font-semibold text-brass-dark border border-brass-dark rounded-full px-2 py-0.5 cursor-pointer"
+            className="self-start text-[12.5px] font-semibold text-brass-dark cursor-pointer disabled:opacity-50 pt-1"
           >
-            Cash out
+            {openingCashOut === plan.id ? "Loading…" : "Cash out these savings"}
           </button>
         )}
-      </div>
+      </>
     );
   };
 
@@ -453,7 +461,7 @@ export function SavingsKindForm({
         <ConfirmSheet
           title={`Delete "${deleteTarget.name}"?`}
           confirmLabel="Delete plan"
-          confirming={saving}
+          confirming={busy}
           onConfirm={confirmDelete}
           onClose={() => setDeleteTarget(null)}
           body={
@@ -480,7 +488,7 @@ export function SavingsKindForm({
         <ConfirmSheet
           title={`Cash out "${cashOutTarget.plan.name}"?`}
           confirmLabel="Cash out now"
-          confirming={saving}
+          confirming={busy}
           onConfirm={confirmCashOut}
           onClose={() => setCashOutTarget(null)}
           body={

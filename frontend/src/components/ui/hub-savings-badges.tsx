@@ -4,18 +4,15 @@ import { useState } from "react";
 
 type Kind = "flexible" | "locked";
 
-/** Brass "Deactivated" pill for a kind with plans but none switched on —
- * tap for a one-liner. */
+/** Brass "Deactivated" pill for a savings kind with no plan switched on
+ * (whether or not any plan rows exist) — tap for a one-liner. */
 export function HubDeactivatedBadge({ kind }: { kind: Kind }) {
   const [open, setOpen] = useState(false);
   return (
     <span className="flex flex-col items-start gap-1">
       <button
         type="button"
-        onClick={(e) => {
-          e.preventDefault();
-          setOpen((v) => !v);
-        }}
+        onClick={() => setOpen((v) => !v)}
         className="text-[10px] font-semibold text-brass-dark bg-tint-brass rounded-full px-1.5 py-0.5 cursor-pointer"
       >
         Deactivated
@@ -41,10 +38,7 @@ export function HubStillGrowingBadge({ count, kind }: { count: number; kind: Kin
     <span className="flex flex-col items-start gap-1">
       <button
         type="button"
-        onClick={(e) => {
-          e.preventDefault();
-          setOpen((v) => !v);
-        }}
+        onClick={() => setOpen((v) => !v)}
         className="text-[10px] font-semibold text-negative bg-tint-negative rounded-full px-1.5 py-0.5 cursor-pointer"
       >
         {count} still growing
