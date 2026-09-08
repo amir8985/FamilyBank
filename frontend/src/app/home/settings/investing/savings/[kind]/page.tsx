@@ -33,6 +33,7 @@ export default function SavingsKindSettingsPage({
   );
 
   if (plansRes.error && !plansRes.data) throw plansRes.error;
+  if (presetsRes.error && !presetsRes.data) throw presetsRes.error;
 
   return (
     <div className="max-w-md mx-auto min-h-screen flex flex-col">

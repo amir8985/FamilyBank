@@ -32,12 +32,61 @@ frontend/   Next.js 16 (App Router) + Tailwind v4 — see frontend/README.md
 ```
 
 
-## Status as of 2026-09-08 — savings plans (backend v1.7.0 / frontend v0.8.0)
+## Status as of 2026-09-08 — savings plans (backend v1.8.0 / frontend v0.9.0)
 
-**Done, reviewed, tested. On branch `savings-plans` (cut from `9a06555` =
-`origin/master`). Push / merge to `master` is gated on explicit user
-confirmation per this project's rules — check whether that's happened
-before assuming it's live.**
+**Done, reviewed, tested, AND merged with `origin/master`'s "Instant UX"
+feature — the savings additions were reworked to fit that architecture
+(optimistic writes, client-side caches). On branch `savings-plans`.
+Push / merge to `master` is gated on explicit user confirmation per this
+project's rules — check whether that's happened before assuming it's live.**
+
+### Instant-UX adaptation (merge round, 2026-09-08)
+
+`origin/master` gained worker-1's Instant-UX feature (client `/home`
+store `lib/family-store.tsx`, SWR cache `lib/use-cached-resource.ts`,
+`ui/toast.tsx`, optimistic writes) while this branch was in progress.
+The savings feature now follows the same rules:
+
+- **Kid portfolio** (`kid-portfolio-screen.tsx`): savings is a
+  `useCachedResource("savings:{kidId}")` alongside master's
+  portfolio/catalog resources; `PortfolioClient` got `savings` +
+  `savingsLoading` props and row skeletons, on top of master's 2-tab
+  base (re-applied the 3-tab Portfolio/Invest/Save + "& Savings" header
+  + Savings section + Save tab).
+- **Deposit / withdraw** (`savings-deposit-sheet.tsx`,
+  `savings-deposit-client.tsx`): optimistic like `debt-sheet.tsx` —
+  `applyKidBalanceDelta(-amount)` / `(+value)`, close or navigate
+  immediately, background POST → `invalidateKid` + `refreshHome`,
+  `.catch` → rollback + `toast`. **`invalidateKid()` (in
+  `use-cached-resource.ts`) now also drops `savings:{kid}` /
+  `savings-deposit:{kid}:`** — add any new per-kid savings cache key to
+  that list.
+- **Settings hub + kind pages**: client components reading
+  `useCachedResource("savings-plans" / "savings-presets" /
+  "family-settings")`. `savings/[kind]/page.tsx` passes
+  `plansRes.mutate` / `.revalidate` into `SavingsKindForm`.
+- **`SavingsKindForm` toggle Save**: `pendingChanges()` snapshots the
+  staged diff **before** `optimisticApply()` mutates the plans cache
+  (the mutate would otherwise make the changes look already-applied and
+  skip the API calls). `sig`-prune keeps a still-pending selection if a
+  failed save rolls the cache back.
+- **Cash-out**: `cashOutOne()` → POST + `invalidateKid` per affected
+  kid + `refreshHome`. `confirmCashOut` keeps its sheet open with a
+  "Working…" state (no optimistic visible effect on the settings
+  screen); the delete `ConfirmSheet` closes immediately because the
+  optimistic row-removal is the feedback.
+- Failure surfacing: the settings page has an inline `error` slot
+  (`handleSave`/`handleCreate`/`confirmDelete` use it); the leftovers
+  sheet + closed cash-out sheet have none, so those `toast`.
+
+**Merge conflicts resolved:** `CLAUDE.md`, kid `page.tsx`,
+`settings/investing/page.tsx`, `portfolio-client.tsx`. Backend
+auto-merged — `PortfolioOut` carries both `savings_value` (this branch)
+and `prices_as_of` (master); the "Moved to savings" history label
+survived master's history-page rewrite. 127 backend tests pass;
+`build` + `lint` + `tsc` clean; full Playwright pass of the merged app
+(home → portfolio → optimistic deposit → optimistic withdraw → hub →
+settings toggle-save → leftovers sheet) with zero console errors.
 
 ### What it is
 
@@ -185,15 +234,17 @@ portfolio screen (now "Investments & **Savings**", tabs
   `Get-NetTCPConnection` for a ghost before assuming a code bug, and
   move to a fresh port + restart both servers.
 
-### Iteration log (condensed — 10 feedback rounds)
+### Iteration log (condensed — 10 feedback rounds + a merge)
 
 Split single screen → flexible/locked + presets → in-app confirm sheet
 → per-plan cash-out (kind-level removed) → staged Save + post-save
 leftovers sheet → deposit-count marker on every plan + accurate copy →
 per-plan Cash-out button on off plans → hub Deactivated pill + redder
 "still growing" + scoped the save alert → React dup-key fix (breakdown
-per kid) → Deactivated pill shows with zero plans. Full detail is in
-git log for `savings-plans`.
+per kid) → Deactivated pill shows with zero plans → **merge
+`origin/master` (Instant UX) + rework every savings write to be
+optimistic** (see the "Instant-UX adaptation" subsection above). Full
+detail is in git log for `savings-plans`.
 
 ## Current state / handoff (2026-09-07, end of `finish-feature` on `worker-1`)
 

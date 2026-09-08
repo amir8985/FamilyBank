@@ -268,7 +268,8 @@ export function SavingsKindForm({
       });
       revalidatePlans();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Something went wrong");
+      // The leftovers sheet has no inline error slot — surface via toast.
+      toast(e instanceof ApiError ? e.message : "Something went wrong", "error");
     } finally {
       setLeftoverBusy(null);
     }
@@ -294,14 +295,16 @@ export function SavingsKindForm({
   async function confirmCashOut() {
     if (!token || !cashOutTarget) return;
     const target = cashOutTarget;
+    // Keep the sheet open with its "Working…" state — unlike delete
+    // (which optimistically removes the row), cash-out has no visible
+    // effect on this screen until it lands.
     setBusy(true);
     setError(null);
-    setCashOutTarget(null);
     try {
       await cashOutOne(target.plan, target.deposits);
+      setCashOutTarget(null);
       revalidatePlans();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Something went wrong");
       toast(e instanceof ApiError ? e.message : "Cash-out failed", "error");
     } finally {
       setBusy(false);
