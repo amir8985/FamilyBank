@@ -16,6 +16,8 @@ export default async function InvestingSettingsPage() {
   const boostActive = settings.boost_buffer_rate !== null;
   const flexibleActive = plans.some((p) => p.is_active && p.lock_months === 0);
   const lockedActive = plans.some((p) => p.is_active && p.lock_months > 0);
+  const flexibleStillGrowing = plans.some((p) => !p.is_active && p.lock_months === 0 && p.open_deposit_count > 0);
+  const lockedStillGrowing = plans.some((p) => !p.is_active && p.lock_months > 0 && p.open_deposit_count > 0);
 
   return (
     <div className="max-w-md mx-auto min-h-screen flex flex-col">
@@ -32,6 +34,7 @@ export default async function InvestingSettingsPage() {
         <Card
           title="Flexible savings"
           active={flexibleActive}
+          stillGrowing={flexibleStillGrowing}
           blurb="A place for your kid to set money aside and earn interest on it — with no strings, so they can take it back out whenever they want."
           href="/home/settings/investing/savings/flexible"
           cta="Flexible savings settings"
@@ -39,6 +42,7 @@ export default async function InvestingSettingsPage() {
         <Card
           title="Locked savings"
           active={lockedActive}
+          stillGrowing={lockedStillGrowing}
           blurb="Higher interest in exchange for leaving the money untouched for a set stretch — a month, a few months, up to a year."
           href="/home/settings/investing/savings/locked"
           cta="Locked savings settings"
@@ -51,12 +55,14 @@ export default async function InvestingSettingsPage() {
 function Card({
   title,
   active,
+  stillGrowing = false,
   blurb,
   href,
   cta,
 }: {
   title: string;
   active: boolean;
+  stillGrowing?: boolean;
   blurb: string;
   href: string;
   cta: string;
@@ -65,10 +71,16 @@ function Card({
     <div className="flex flex-col gap-2.5 bg-card rounded-2xl px-4 py-4 border border-border-hairline">
       <div className="flex items-center gap-1.5">
         <h2 className="font-serif font-semibold text-[16px] text-emerald-dark">{title}</h2>
-        {active && (
+        {active ? (
           <span className="text-[10px] font-semibold text-tint-dark bg-tint-emerald rounded-full px-1.5 py-0.5">
             Active
           </span>
+        ) : (
+          stillGrowing && (
+            <span className="text-[10px] font-semibold text-brass-dark bg-tint-brass rounded-full px-1.5 py-0.5">
+              Savings still growing
+            </span>
+          )
         )}
       </div>
       <p className="text-[13.5px] text-muted leading-relaxed">{blurb}</p>

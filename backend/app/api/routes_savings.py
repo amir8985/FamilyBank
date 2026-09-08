@@ -12,13 +12,13 @@ from app.schemas.savings import (
     SavingsDepositDetailOut,
     SavingsDepositRequest,
     SavingsOverviewOut,
-    SavingsPlanCreate,
-    SavingsCashOutRequest,
     SavingsCashOutResult,
+    SavingsPlanCreate,
     SavingsPlanOut,
     SavingsPlanUpdate,
     SavingsPresetOut,
     SavingsPresetToggle,
+    PlanDepositOut,
 )
 from app.services import savings_service
 
@@ -97,14 +97,21 @@ async def toggle_savings_preset(
     await db.commit()
 
 
-@router.post("/family/savings/cash-out", response_model=SavingsCashOutResult)
-async def cash_out_savings(
-    body: SavingsCashOutRequest, family: Family = Depends(get_family), db: AsyncSession = Depends(get_db)
+@router.get("/family/savings-plans/{plan_id}/deposits", response_model=list[PlanDepositOut])
+async def list_plan_deposits(
+    plan_id: uuid.UUID, family: Family = Depends(get_family), db: AsyncSession = Depends(get_db)
+) -> list[PlanDepositOut]:
+    plan = await _get_owned_plan(db, family, plan_id)
+    rows = await savings_service.plan_deposit_breakdown(db, plan, family.base_currency)
+    return [PlanDepositOut(**r) for r in rows]
+
+
+@router.post("/family/savings-plans/{plan_id}/cash-out", response_model=SavingsCashOutResult)
+async def cash_out_plan(
+    plan_id: uuid.UUID, family: Family = Depends(get_family), db: AsyncSession = Depends(get_db)
 ) -> SavingsCashOutResult:
-    try:
-        result = await savings_service.cash_out_kind(db, family, body.kind)
-    except savings_service.SavingsError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    plan = await _get_owned_plan(db, family, plan_id)
+    result = await savings_service.cash_out_plan(db, plan, family.base_currency)
     await db.commit()
     return SavingsCashOutResult(**result)
 

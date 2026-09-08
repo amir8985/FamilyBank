@@ -135,6 +135,15 @@ export type SavingsPresetOut = {
   kind: "flexible" | "locked";
 };
 
+export type PlanDepositOut = {
+  kid_id: string;
+  kid_name: string;
+  current_value: string;
+  currency: string;
+  is_locked: boolean;
+  is_matured: boolean;
+};
+
 export type DepositablePlanOut = {
   id: string;
   name: string;

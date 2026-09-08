@@ -43,14 +43,19 @@ class SavingsPresetToggle(BaseModel):
     active: bool
 
 
-class SavingsCashOutRequest(BaseModel):
-    kind: str  # "flexible" | "locked"
-
-
 class SavingsCashOutResult(BaseModel):
     closed_count: int
     total_paid: Decimal
     currency: str
+
+
+class PlanDepositOut(BaseModel):
+    kid_id: uuid.UUID
+    kid_name: str
+    current_value: Decimal
+    currency: str
+    is_locked: bool
+    is_matured: bool
 
 
 class DepositablePlanOut(BaseModel):

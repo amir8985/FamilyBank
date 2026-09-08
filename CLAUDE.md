@@ -153,6 +153,32 @@ Rate is a monthly percentage, compounded daily on read.
     `test_savings_service` pass; build/lint clean; re-verified live
     (amber sheets, cash-out actually emptied the deposits, badges
     render).
+- **Fourth round (same session):**
+  - **Kind settings pages are now a staged form.** Preset + custom-plan
+    checkboxes only change local state; a **"Save changes"** button
+    (appears when dirty) commits them. On Save, if any change switches
+    OFF a plan a kid still has money in, `SavingsChangesSheet` (amber)
+    opens with a per-kid breakdown (`GET
+    /family/savings-plans/{id}/deposits`) and two choices: **"Cash out &
+    turn off"** (`POST /family/savings-plans/{id}/cash-out` per affected
+    plan, then apply) or **"Turn off, keep the savings"**. Staged state
+    resets via the adjust-state-during-render pattern when the server
+    `plans` signature changes after refresh.
+  - The page-wide "Cash out every X deposit" button from round 3 was
+    **removed** (user didn't want it) — cash-out is now only per-plan,
+    surfaced inside the Save confirm sheet. `savings_service.cash_out_kind`
+    → `cash_out_plan`; added `plan_deposit_breakdown`.
+  - A plan that's **off but still holds deposits** shows an orange,
+    tap-to-explain **`StillGrowingBadge`** ("N still saving") instead of
+    the plain muted text — same tap-to-reveal idea as the boost badge.
+    The hub's kind card shows an orange **"Savings still growing"** pill
+    (vs. green "Active") in the same situation.
+  - Delete still uses its own immediate `ConfirmSheet` (that already had
+    a popup — round-1 point was only about the checkboxes).
+  - `plan_deposit_breakdown`'s Kid-name lookup: `session.execute(...)`
+    returns a `Result`, not subscriptable — must iterate it into a dict
+    (`{k: v for k, v in await session.execute(...)}`), don't `dict(...)`
+    it directly.
 - **Deferred, still**: "interest from parent" as a *separate* flat
   cash-balance rate — this savings-plans feature is the more general
   version of that idea, so it may now be moot; confirm with the user

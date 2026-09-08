@@ -362,30 +362,57 @@ async def withdraw_deposit(
     return deposit
 
 
-async def cash_out_kind(session: AsyncSession, family, kind: str) -> dict:
-    """Parent action: close every open deposit of one kind (flexible or
-    locked) for every kid in the family, paying each back to that kid's
-    cash. Overrides the maturity lock on locked deposits — it's the
-    parent's own money to release. Lets a parent empty out a plan they
-    want to retire without hunting down each kid's deposit."""
-    if kind not in ("flexible", "locked"):
-        raise SavingsError("kind must be 'flexible' or 'locked'")
+async def _plan_open_deposits(session: AsyncSession, plan_id: uuid.UUID) -> list[SavingsDeposit]:
+    return list(
+        await session.scalars(
+            select(SavingsDeposit).where(
+                SavingsDeposit.plan_id == plan_id, SavingsDeposit.is_open
+            )
+        )
+    )
 
+
+async def plan_deposit_breakdown(
+    session: AsyncSession, plan: SavingsPlan, family_currency: str
+) -> list[dict]:
+    """Per-kid list of who still has money in a plan — powers the
+    confirmation the parent sees before switching a plan off."""
     now = datetime.now(timezone.utc)
-    kid_ids = list(await session.scalars(select(Kid.id).where(Kid.family_id == family.id)))
-    if not kid_ids:
-        return {"closed_count": 0, "total_paid": Decimal("0.00"), "currency": family.base_currency}
+    deposits = await _plan_open_deposits(session, plan.id)
+    if not deposits:
+        return []
+    names = {
+        kid_id: kid_name
+        for kid_id, kid_name in await session.execute(
+            select(Kid.id, Kid.name).where(Kid.id.in_([d.kid_id for d in deposits]))
+        )
+    }
+    rates = await fx_service.load_all_rates(session)
+    out = []
+    for d in deposits:
+        native = deposit_value(d, now)
+        value = fx_service.convert_from_table(rates, native, d.currency, family_currency)
+        out.append(
+            {
+                "kid_id": d.kid_id,
+                "kid_name": names.get(d.kid_id, "?"),
+                "current_value": (value if value is not None else native).quantize(_CENTS, rounding=ROUND_HALF_UP),
+                "currency": family_currency if value is not None else d.currency,
+                "is_locked": d.lock_months > 0,
+                "is_matured": is_matured(d, now),
+            }
+        )
+    return out
 
-    stmt = select(SavingsDeposit).where(
-        SavingsDeposit.kid_id.in_(kid_ids), SavingsDeposit.is_open
-    )
-    stmt = stmt.where(
-        SavingsDeposit.lock_months == 0 if kind == "flexible" else SavingsDeposit.lock_months > 0
-    )
-    deposits = list(await session.scalars(stmt))
 
+async def cash_out_plan(session: AsyncSession, plan: SavingsPlan, family_currency: str) -> dict:
+    """Parent action: close every open deposit in one plan, across every
+    kid, paying each back to that kid's cash. Overrides the maturity lock
+    on locked deposits — it's the parent's own money to release. Lets a
+    parent retire a plan without hunting down each kid's deposit."""
+    now = datetime.now(timezone.utc)
+    deposits = await _plan_open_deposits(session, plan.id)
     total = Decimal("0.00")
     for deposit in deposits:
-        total += await _close_deposit(session, deposit, family.base_currency, now)
-
-    return {"closed_count": len(deposits), "total_paid": total, "currency": family.base_currency}
+        total += await _close_deposit(session, deposit, family_currency, now)
+    return {"closed_count": len(deposits), "total_paid": total, "currency": family_currency}

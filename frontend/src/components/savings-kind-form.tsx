@@ -5,8 +5,10 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
 import { ConfirmSheet } from "@/components/ui/confirm-sheet";
+import { StillGrowingBadge } from "@/components/ui/still-growing-badge";
+import { SavingsChangesSheet, type AffectedPlan } from "@/components/savings-changes-sheet";
 import { annualFromMonthly } from "@/lib/format";
-import type { SavingsPlanOut, SavingsPresetOut } from "@/lib/types";
+import type { PlanDepositOut, SavingsPlanOut, SavingsPresetOut } from "@/lib/types";
 
 type Kind = "flexible" | "locked";
 
@@ -30,59 +32,120 @@ export function SavingsKindForm({
   presets: SavingsPresetOut[];
 }) {
   const { data: session } = useSession();
+  const token = session?.backendToken;
   const router = useRouter();
 
   const kindPresets = presets.filter((p) => p.kind === kind);
   const inKind = (p: SavingsPlanOut) => (kind === "flexible" ? p.lock_months === 0 : p.lock_months > 0);
   const customPlans = plans.filter((p) => p.preset_key === null && inKind(p));
-  const openDeposits = plans.filter(inKind).reduce((n, p) => n + p.open_deposit_count, 0);
+
+  const serverPresetOn = (key: string) => plans.some((p) => p.preset_key === key && p.is_active);
+  const serverCustomOn = (id: string) => plans.find((p) => p.id === id)?.is_active ?? false;
+
+  // Staged toggle changes — nothing is written until "Save changes".
+  const [override, setOverride] = useState<Record<string, boolean>>({});
+  // Reset staged state whenever the server data changes under us (after a
+  // save + refresh). React's documented "adjust state during render".
+  const sig = plans.map((p) => `${p.id}:${p.is_active}`).join("|");
+  const [lastSig, setLastSig] = useState(sig);
+  if (sig !== lastSig) {
+    setLastSig(sig);
+    setOverride({});
+  }
+
+  const presetOn = (key: string) => override[`preset:${key}`] ?? serverPresetOn(key);
+  const customOn = (id: string) => override[`custom:${id}`] ?? serverCustomOn(id);
+  const dirty = Object.entries(override).some(([k, v]) => {
+    const id = k.slice(k.indexOf(":") + 1);
+    return k.startsWith("preset:") ? serverPresetOn(id) !== v : serverCustomOn(id) !== v;
+  });
 
   const [name, setName] = useState("");
   const [rate, setRate] = useState(kind === "locked" ? 3.0 : 1.0);
   const [lockMonths, setLockMonths] = useState(6);
   const [creating, setCreating] = useState(false);
-  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SavingsPlanOut | null>(null);
-  const [cashOutOpen, setCashOutOpen] = useState(false);
-  const [working, setWorking] = useState(false);
+  const [changeSheet, setChangeSheet] = useState<AffectedPlan[] | null>(null);
 
-  const kindWord = kind === "flexible" ? "flexible" : "locked";
+  function stagePreset(key: string, on: boolean) {
+    setOverride((o) => ({ ...o, [`preset:${key}`]: on }));
+  }
+  function stageCustom(id: string, on: boolean) {
+    setOverride((o) => ({ ...o, [`custom:${id}`]: on }));
+  }
 
-  async function togglePreset(preset: SavingsPresetOut, on: boolean) {
-    if (!session?.backendToken) return;
-    setBusyKey(preset.key);
-    setError(null);
-    try {
-      await api.post("/family/savings-presets", session.backendToken, { key: preset.key, active: on });
-      router.refresh();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Something went wrong");
-    } finally {
-      setBusyKey(null);
+  // Plans being switched off (vs. server) that still hold a kid's money.
+  function turningOffWithDeposits(): SavingsPlanOut[] {
+    const out: SavingsPlanOut[] = [];
+    for (const preset of kindPresets) {
+      const existing = plans.find((p) => p.preset_key === preset.key);
+      if (existing?.is_active && !presetOn(preset.key) && existing.open_deposit_count > 0) out.push(existing);
+    }
+    for (const plan of customPlans) {
+      if (plan.is_active && !customOn(plan.id) && plan.open_deposit_count > 0) out.push(plan);
+    }
+    return out;
+  }
+
+  async function applyToggles() {
+    if (!token) return;
+    for (const preset of kindPresets) {
+      const want = presetOn(preset.key);
+      if (want !== serverPresetOn(preset.key)) {
+        await api.post("/family/savings-presets", token, { key: preset.key, active: want });
+      }
+    }
+    for (const plan of customPlans) {
+      const want = customOn(plan.id);
+      if (want !== serverCustomOn(plan.id)) {
+        await api.patch(`/family/savings-plans/${plan.id}`, token, { is_active: want });
+      }
     }
   }
 
-  async function toggleCustomActive(plan: SavingsPlanOut, on: boolean) {
-    if (!session?.backendToken) return;
-    setBusyKey(plan.id);
+  async function runSave(work: () => Promise<void>) {
+    setSaving(true);
     setError(null);
     try {
-      await api.patch(`/family/savings-plans/${plan.id}`, session.backendToken, { is_active: on });
+      await work();
+      setOverride({});
+      setChangeSheet(null);
       router.refresh();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Something went wrong");
     } finally {
-      setBusyKey(null);
+      setSaving(false);
+    }
+  }
+
+  async function handleSave() {
+    if (!token) return;
+    const affected = turningOffWithDeposits();
+    if (affected.length === 0) {
+      await runSave(applyToggles);
+      return;
+    }
+    try {
+      const withDeposits: AffectedPlan[] = await Promise.all(
+        affected.map(async (plan) => ({
+          plan,
+          deposits: await api.get<PlanDepositOut[]>(`/family/savings-plans/${plan.id}/deposits`, token),
+        })),
+      );
+      setChangeSheet(withDeposits);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Something went wrong");
     }
   }
 
   async function handleCreate() {
-    if (!session?.backendToken || !name.trim()) return;
+    if (!token || !name.trim()) return;
     setCreating(true);
     setError(null);
     try {
-      await api.post("/family/savings-plans", session.backendToken, {
+      await api.post("/family/savings-plans", token, {
         name: name.trim(),
         monthly_rate: rate,
         lock_months: kind === "locked" ? lockMonths : 0,
@@ -99,34 +162,17 @@ export function SavingsKindForm({
   }
 
   async function confirmDelete() {
-    if (!session?.backendToken || !deleteTarget) return;
-    setWorking(true);
-    setError(null);
-    try {
-      await api.delete(`/family/savings-plans/${deleteTarget.id}`, session.backendToken);
+    if (!token || !deleteTarget) return;
+    await runSave(async () => {
+      await api.delete(`/family/savings-plans/${deleteTarget.id}`, token);
       setDeleteTarget(null);
-      router.refresh();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Something went wrong");
-    } finally {
-      setWorking(false);
-    }
+    });
   }
 
-  async function confirmCashOut() {
-    if (!session?.backendToken) return;
-    setWorking(true);
-    setError(null);
-    try {
-      await api.post("/family/savings/cash-out", session.backendToken, { kind });
-      setCashOutOpen(false);
-      router.refresh();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Something went wrong");
-    } finally {
-      setWorking(false);
-    }
-  }
+  const badgeFor = (plan: SavingsPlanOut | undefined, on: boolean) =>
+    plan && !on && plan.open_deposit_count > 0 ? (
+      <StillGrowingBadge count={plan.open_deposit_count} rate={String(plan.monthly_rate)} />
+    ) : null;
 
   return (
     <div className="flex flex-col gap-6 px-5 pt-4 pb-10">
@@ -152,33 +198,26 @@ export function SavingsKindForm({
         <span className="text-[12px] font-semibold text-muted">Recommended plans</span>
         {kindPresets.map((preset) => {
           const existing = plans.find((p) => p.preset_key === preset.key);
-          const on = Boolean(existing?.is_active);
+          const on = presetOn(preset.key);
           return (
-            <label
-              key={preset.key}
-              className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex items-center justify-between gap-3 cursor-pointer"
-            >
-              <div>
-                <div className="font-semibold text-[14.5px] text-emerald-dark">{preset.name}</div>
-                <div className="text-[12px] text-muted">
-                  {Number(preset.monthly_rate).toFixed(1)}%/mo · ≈ {Number(preset.annual_rate).toFixed(1)}%/year
-                  {kind === "locked" ? ` · ${termLabel(preset.lock_months).replace("Locked for ", "")}` : ""}
-                </div>
-                {existing && !existing.is_active && existing.open_deposit_count > 0 && (
-                  <div className="text-[11px] text-muted mt-0.5">
-                    Off, but {existing.open_deposit_count} deposit
-                    {existing.open_deposit_count === 1 ? "" : "s"} still growing in it
+            <div key={preset.key} className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex flex-col gap-1.5">
+              <label className="flex items-center justify-between gap-3 cursor-pointer">
+                <div>
+                  <div className="font-semibold text-[14.5px] text-emerald-dark">{preset.name}</div>
+                  <div className="text-[12px] text-muted">
+                    {Number(preset.monthly_rate).toFixed(1)}%/mo · ≈ {Number(preset.annual_rate).toFixed(1)}%/year
+                    {kind === "locked" ? ` · ${termLabel(preset.lock_months).replace("Locked for ", "")}` : ""}
                   </div>
-                )}
-              </div>
-              <input
-                type="checkbox"
-                checked={on}
-                disabled={busyKey === preset.key}
-                onChange={(e) => togglePreset(preset, e.target.checked)}
-                className="w-5 h-5 accent-emerald cursor-pointer shrink-0"
-              />
-            </label>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={on}
+                  onChange={(e) => stagePreset(preset.key, e.target.checked)}
+                  className="w-5 h-5 accent-emerald cursor-pointer shrink-0"
+                />
+              </label>
+              {badgeFor(existing, on)}
+            </div>
           );
         })}
       </div>
@@ -186,49 +225,59 @@ export function SavingsKindForm({
       {customPlans.length > 0 && (
         <div className="flex flex-col gap-2.5">
           <span className="text-[12px] font-semibold text-muted">Your own plans</span>
-          {customPlans.map((plan) => (
-            <div
-              key={plan.id}
-              className={`bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex flex-col gap-1 ${
-                plan.is_active ? "" : "opacity-60"
-              }`}
-            >
-              <label className="flex items-center justify-between gap-3 cursor-pointer">
-                <div>
-                  <div className="font-semibold text-[14.5px] text-emerald-dark">{plan.name}</div>
-                  <div className="text-[12px] text-muted">
-                    {termLabel(plan.lock_months)} · {Number(plan.monthly_rate).toFixed(1)}%/mo · ≈{" "}
-                    {Number(plan.annual_rate).toFixed(1)}%/year
-                  </div>
-                  {plan.open_deposit_count > 0 && (
-                    <div className="text-[11.5px] text-muted mt-0.5">
-                      {plan.open_deposit_count} open deposit{plan.open_deposit_count === 1 ? "" : "s"}
-                    </div>
-                  )}
-                </div>
-                <input
-                  type="checkbox"
-                  checked={plan.is_active}
-                  disabled={busyKey === plan.id}
-                  onChange={(e) => toggleCustomActive(plan, e.target.checked)}
-                  className="w-5 h-5 accent-emerald cursor-pointer shrink-0"
-                />
-              </label>
-              <button
-                type="button"
-                disabled={busyKey === plan.id}
-                onClick={() => setDeleteTarget(plan)}
-                className="self-start text-[12.5px] font-semibold text-negative cursor-pointer disabled:opacity-50 pt-1"
+          {customPlans.map((plan) => {
+            const on = customOn(plan.id);
+            return (
+              <div
+                key={plan.id}
+                className={`bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex flex-col gap-1 ${
+                  on ? "" : "opacity-70"
+                }`}
               >
-                Delete
-              </button>
-            </div>
-          ))}
+                <label className="flex items-center justify-between gap-3 cursor-pointer">
+                  <div>
+                    <div className="font-semibold text-[14.5px] text-emerald-dark">{plan.name}</div>
+                    <div className="text-[12px] text-muted">
+                      {termLabel(plan.lock_months)} · {Number(plan.monthly_rate).toFixed(1)}%/mo · ≈{" "}
+                      {Number(plan.annual_rate).toFixed(1)}%/year
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={(e) => stageCustom(plan.id, e.target.checked)}
+                    className="w-5 h-5 accent-emerald cursor-pointer shrink-0"
+                  />
+                </label>
+                {badgeFor(plan, on)}
+                <button
+                  type="button"
+                  onClick={() => setDeleteTarget(plan)}
+                  className="self-start text-[12.5px] font-semibold text-negative cursor-pointer pt-1"
+                >
+                  Delete
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
 
-      <div className="flex flex-col gap-3">
-        <span className="text-[12px] font-semibold text-muted">Add your own</span>
+      {error && <p className="text-[13px] text-negative">{error}</p>}
+
+      {dirty && (
+        <button
+          type="button"
+          disabled={saving}
+          onClick={handleSave}
+          className="bg-emerald text-white text-center min-h-11 py-[13px] rounded-xl text-[14px] font-semibold disabled:opacity-50 cursor-pointer"
+        >
+          {saving ? "Saving…" : "Save changes"}
+        </button>
+      )}
+
+      <div className="flex flex-col gap-3 border-t border-border-hairline-strong pt-6">
+        <span className="text-[12px] font-semibold text-muted">Add your own plan</span>
 
         <label className="flex flex-col gap-1.5">
           <span className="text-[12px] font-semibold text-muted">Name</span>
@@ -296,8 +345,6 @@ export function SavingsKindForm({
           </p>
         </div>
 
-        {error && <p className="text-[13px] text-negative">{error}</p>}
-
         <button
           type="button"
           disabled={creating || !name.trim()}
@@ -308,21 +355,11 @@ export function SavingsKindForm({
         </button>
       </div>
 
-      {openDeposits > 0 && (
-        <button
-          type="button"
-          onClick={() => setCashOutOpen(true)}
-          className="text-center min-h-11 py-[13px] rounded-xl text-[13.5px] font-semibold border border-brass-dark text-brass-dark cursor-pointer"
-        >
-          Cash out every {kindWord} deposit
-        </button>
-      )}
-
       {deleteTarget && (
         <ConfirmSheet
           title={`Delete "${deleteTarget.name}"?`}
           confirmLabel="Delete plan"
-          confirming={working}
+          confirming={saving}
           onConfirm={confirmDelete}
           onClose={() => setDeleteTarget(null)}
           body={
@@ -335,20 +372,19 @@ export function SavingsKindForm({
         />
       )}
 
-      {cashOutOpen && (
-        <ConfirmSheet
-          title={`Cash out every ${kindWord} deposit?`}
-          confirmLabel={`Cash out ${kindWord} savings`}
-          confirming={working}
-          onConfirm={confirmCashOut}
-          onClose={() => setCashOutOpen(false)}
-          body={
-            <>
-              Every {kindWord} savings deposit, for every kid, is closed right now and paid back
-              into their cash — interest included
-              {kind === "locked" ? ", even if the term isn't up yet" : ""}. Their plans stay set up
-              for next time.
-            </>
+      {changeSheet && (
+        <SavingsChangesSheet
+          affected={changeSheet}
+          working={saving}
+          onClose={() => setChangeSheet(null)}
+          onJustSave={() => runSave(applyToggles)}
+          onCashOutAndSave={() =>
+            runSave(async () => {
+              for (const { plan } of changeSheet) {
+                await api.post(`/family/savings-plans/${plan.id}/cash-out`, token!);
+              }
+              await applyToggles();
+            })
           }
         />
       )}
