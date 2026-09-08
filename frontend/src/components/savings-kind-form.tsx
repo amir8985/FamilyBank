@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
 import { ConfirmSheet } from "@/components/ui/confirm-sheet";
 import { StillGrowingBadge } from "@/components/ui/still-growing-badge";
-import { SavingsChangesSheet, type AffectedPlan } from "@/components/savings-changes-sheet";
+import { SavingsLeftoversSheet, type LeftoverPlan } from "@/components/savings-leftovers-sheet";
 import { annualFromMonthly } from "@/lib/format";
 import type { PlanDepositOut, SavingsPlanOut, SavingsPresetOut } from "@/lib/types";
 
@@ -42,10 +42,10 @@ export function SavingsKindForm({
   const serverPresetOn = (key: string) => plans.some((p) => p.preset_key === key && p.is_active);
   const serverCustomOn = (id: string) => plans.find((p) => p.id === id)?.is_active ?? false;
 
-  // Staged toggle changes — nothing is written until "Save changes".
+  // Nothing is written until "Save changes" — a checkbox only stages.
   const [override, setOverride] = useState<Record<string, boolean>>({});
-  // Reset staged state whenever the server data changes under us (after a
-  // save + refresh). React's documented "adjust state during render".
+  // Drop staged state whenever the server data changes under us (after a
+  // save + refresh) — React's documented "adjust state during render".
   const sig = plans.map((p) => `${p.id}:${p.is_active}`).join("|");
   const [lastSig, setLastSig] = useState(sig);
   if (sig !== lastSig) {
@@ -67,26 +67,14 @@ export function SavingsKindForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SavingsPlanOut | null>(null);
-  const [changeSheet, setChangeSheet] = useState<AffectedPlan[] | null>(null);
+  const [leftovers, setLeftovers] = useState<LeftoverPlan[] | null>(null);
+  const [leftoverBusy, setLeftoverBusy] = useState<string | null>(null);
 
   function stagePreset(key: string, on: boolean) {
     setOverride((o) => ({ ...o, [`preset:${key}`]: on }));
   }
   function stageCustom(id: string, on: boolean) {
     setOverride((o) => ({ ...o, [`custom:${id}`]: on }));
-  }
-
-  // Plans being switched off (vs. server) that still hold a kid's money.
-  function turningOffWithDeposits(): SavingsPlanOut[] {
-    const out: SavingsPlanOut[] = [];
-    for (const preset of kindPresets) {
-      const existing = plans.find((p) => p.preset_key === preset.key);
-      if (existing?.is_active && !presetOn(preset.key) && existing.open_deposit_count > 0) out.push(existing);
-    }
-    for (const plan of customPlans) {
-      if (plan.is_active && !customOn(plan.id) && plan.open_deposit_count > 0) out.push(plan);
-    }
-    return out;
   }
 
   async function applyToggles() {
@@ -105,38 +93,32 @@ export function SavingsKindForm({
     }
   }
 
-  async function runSave(work: () => Promise<void>) {
-    setSaving(true);
-    setError(null);
-    try {
-      await work();
-      setOverride({});
-      setChangeSheet(null);
-      router.refresh();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Something went wrong");
-    } finally {
-      setSaving(false);
-    }
+  async function loadLeftovers(): Promise<LeftoverPlan[]> {
+    if (!token) return [];
+    const fresh = await api.get<SavingsPlanOut[]>("/family/savings-plans", token);
+    const off = fresh.filter((p) => inKind(p) && !p.is_active && p.open_deposit_count > 0);
+    return Promise.all(
+      off.map(async (plan) => ({
+        plan,
+        deposits: await api.get<PlanDepositOut[]>(`/family/savings-plans/${plan.id}/deposits`, token),
+      })),
+    );
   }
 
   async function handleSave() {
     if (!token) return;
-    const affected = turningOffWithDeposits();
-    if (affected.length === 0) {
-      await runSave(applyToggles);
-      return;
-    }
+    setSaving(true);
+    setError(null);
     try {
-      const withDeposits: AffectedPlan[] = await Promise.all(
-        affected.map(async (plan) => ({
-          plan,
-          deposits: await api.get<PlanDepositOut[]>(`/family/savings-plans/${plan.id}/deposits`, token),
-        })),
-      );
-      setChangeSheet(withDeposits);
+      await applyToggles();
+      const left = await loadLeftovers();
+      setOverride({});
+      router.refresh();
+      if (left.length > 0) setLeftovers(left);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Something went wrong");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -163,10 +145,41 @@ export function SavingsKindForm({
 
   async function confirmDelete() {
     if (!token || !deleteTarget) return;
-    await runSave(async () => {
+    setSaving(true);
+    setError(null);
+    try {
       await api.delete(`/family/savings-plans/${deleteTarget.id}`, token);
       setDeleteTarget(null);
-    });
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Something went wrong");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function resolveLeftover(plan: SavingsPlanOut, action: "cash-out" | "reopen") {
+    if (!token) return;
+    setLeftoverBusy(plan.id);
+    setError(null);
+    try {
+      if (action === "cash-out") {
+        await api.post(`/family/savings-plans/${plan.id}/cash-out`, token);
+      } else if (plan.preset_key) {
+        await api.post("/family/savings-presets", token, { key: plan.preset_key, active: true });
+      } else {
+        await api.patch(`/family/savings-plans/${plan.id}`, token, { is_active: true });
+      }
+      setLeftovers((cur) => {
+        const next = (cur ?? []).filter((l) => l.plan.id !== plan.id);
+        return next.length ? next : null;
+      });
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Something went wrong");
+    } finally {
+      setLeftoverBusy(null);
+    }
   }
 
   const badgeFor = (plan: SavingsPlanOut | undefined, on: boolean) =>
@@ -175,184 +188,198 @@ export function SavingsKindForm({
     ) : null;
 
   return (
-    <div className="flex flex-col gap-6 px-5 pt-4 pb-10">
-      <div className="flex flex-col gap-3 text-[13.5px] text-muted leading-relaxed">
-        {kind === "flexible" ? (
-          <p>
-            Your kid can move cash into a flexible plan and pull it back out any time. It earns
-            interest every day it&apos;s in there.
-          </p>
-        ) : (
-          <p>
-            A locked plan can&apos;t be touched until its term is up — in exchange for a higher
-            rate. When the term ends it keeps earning the same rate until your kid withdraws.
-          </p>
-        )}
-        <p>
-          Rates are <strong>monthly</strong> and compound, so the yearly figure (shown on each
-          plan) works out higher than twelve times the monthly one.
-        </p>
-      </div>
+    <div className="flex flex-col">
+      {dirty && (
+        <div className="sticky top-0 z-20 bg-cream/95 backdrop-blur border-b border-border-hairline-strong px-5 py-2.5">
+          <button
+            type="button"
+            disabled={saving}
+            onClick={handleSave}
+            className="w-full bg-emerald text-white text-center min-h-11 py-[12px] rounded-xl text-[14px] font-semibold disabled:opacity-50 cursor-pointer"
+          >
+            {saving ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      )}
 
-      <div className="flex flex-col gap-2.5">
-        <span className="text-[12px] font-semibold text-muted">Recommended plans</span>
-        {kindPresets.map((preset) => {
-          const existing = plans.find((p) => p.preset_key === preset.key);
-          const on = presetOn(preset.key);
-          return (
-            <div key={preset.key} className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex flex-col gap-1.5">
-              <label className="flex items-center justify-between gap-3 cursor-pointer">
-                <div>
-                  <div className="font-semibold text-[14.5px] text-emerald-dark">{preset.name}</div>
-                  <div className="text-[12px] text-muted">
-                    {Number(preset.monthly_rate).toFixed(1)}%/mo · ≈ {Number(preset.annual_rate).toFixed(1)}%/year
-                    {kind === "locked" ? ` · ${termLabel(preset.lock_months).replace("Locked for ", "")}` : ""}
-                  </div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={on}
-                  onChange={(e) => stagePreset(preset.key, e.target.checked)}
-                  className="w-5 h-5 accent-emerald cursor-pointer shrink-0"
-                />
-              </label>
-              {badgeFor(existing, on)}
-            </div>
-          );
-        })}
-      </div>
+      <div className="flex flex-col gap-6 px-5 pt-4 pb-10">
+        <div className="flex flex-col gap-3 text-[13.5px] text-muted leading-relaxed">
+          {kind === "flexible" ? (
+            <p>
+              Your kid can move cash into a flexible plan and pull it back out any time. It earns
+              interest every day it&apos;s in there.
+            </p>
+          ) : (
+            <p>
+              A locked plan can&apos;t be touched until its term is up — in exchange for a higher
+              rate. When the term ends it keeps earning the same rate until your kid withdraws.
+            </p>
+          )}
+          <p>
+            Rates are <strong>monthly</strong> and compound, so the yearly figure (shown on each
+            plan) works out higher than twelve times the monthly one.
+          </p>
+          <p className="text-[12.5px]">
+            Turn plans on or off with the checkboxes, then <strong>Save changes</strong>.
+          </p>
+        </div>
 
-      {customPlans.length > 0 && (
         <div className="flex flex-col gap-2.5">
-          <span className="text-[12px] font-semibold text-muted">Your own plans</span>
-          {customPlans.map((plan) => {
-            const on = customOn(plan.id);
+          <span className="text-[12px] font-semibold text-muted">Recommended plans</span>
+          {kindPresets.map((preset) => {
+            const existing = plans.find((p) => p.preset_key === preset.key);
+            const on = presetOn(preset.key);
             return (
               <div
-                key={plan.id}
-                className={`bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex flex-col gap-1 ${
-                  on ? "" : "opacity-70"
-                }`}
+                key={preset.key}
+                className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex flex-col gap-1.5"
               >
                 <label className="flex items-center justify-between gap-3 cursor-pointer">
                   <div>
-                    <div className="font-semibold text-[14.5px] text-emerald-dark">{plan.name}</div>
+                    <div className="font-semibold text-[14.5px] text-emerald-dark">{preset.name}</div>
                     <div className="text-[12px] text-muted">
-                      {termLabel(plan.lock_months)} · {Number(plan.monthly_rate).toFixed(1)}%/mo · ≈{" "}
-                      {Number(plan.annual_rate).toFixed(1)}%/year
+                      {Number(preset.monthly_rate).toFixed(1)}%/mo · ≈{" "}
+                      {Number(preset.annual_rate).toFixed(1)}%/year
+                      {kind === "locked"
+                        ? ` · ${termLabel(preset.lock_months).replace("Locked for ", "")}`
+                        : ""}
                     </div>
                   </div>
                   <input
                     type="checkbox"
                     checked={on}
-                    onChange={(e) => stageCustom(plan.id, e.target.checked)}
+                    onChange={(e) => stagePreset(preset.key, e.target.checked)}
                     className="w-5 h-5 accent-emerald cursor-pointer shrink-0"
                   />
                 </label>
-                {badgeFor(plan, on)}
-                <button
-                  type="button"
-                  onClick={() => setDeleteTarget(plan)}
-                  className="self-start text-[12.5px] font-semibold text-negative cursor-pointer pt-1"
-                >
-                  Delete
-                </button>
+                {badgeFor(existing, on)}
               </div>
             );
           })}
         </div>
-      )}
 
-      {error && <p className="text-[13px] text-negative">{error}</p>}
+        {customPlans.length > 0 && (
+          <div className="flex flex-col gap-2.5">
+            <span className="text-[12px] font-semibold text-muted">Your own plans</span>
+            {customPlans.map((plan) => {
+              const on = customOn(plan.id);
+              return (
+                <div
+                  key={plan.id}
+                  className={`bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex flex-col gap-1 ${
+                    on ? "" : "opacity-70"
+                  }`}
+                >
+                  <label className="flex items-center justify-between gap-3 cursor-pointer">
+                    <div>
+                      <div className="font-semibold text-[14.5px] text-emerald-dark">{plan.name}</div>
+                      <div className="text-[12px] text-muted">
+                        {termLabel(plan.lock_months)} · {Number(plan.monthly_rate).toFixed(1)}%/mo · ≈{" "}
+                        {Number(plan.annual_rate).toFixed(1)}%/year
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={(e) => stageCustom(plan.id, e.target.checked)}
+                      className="w-5 h-5 accent-emerald cursor-pointer shrink-0"
+                    />
+                  </label>
+                  {badgeFor(plan, on)}
+                  <button
+                    type="button"
+                    onClick={() => setDeleteTarget(plan)}
+                    className="self-start text-[12.5px] font-semibold text-negative cursor-pointer pt-1"
+                  >
+                    Delete
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
-      {dirty && (
-        <button
-          type="button"
-          disabled={saving}
-          onClick={handleSave}
-          className="bg-emerald text-white text-center min-h-11 py-[13px] rounded-xl text-[14px] font-semibold disabled:opacity-50 cursor-pointer"
-        >
-          {saving ? "Saving…" : "Save changes"}
-        </button>
-      )}
+        {error && <p className="text-[13px] text-negative">{error}</p>}
 
-      <div className="flex flex-col gap-3 border-t border-border-hairline-strong pt-6">
-        <span className="text-[12px] font-semibold text-muted">Add your own plan</span>
+        <div className="flex flex-col gap-3 border-t border-border-hairline-strong pt-6">
+          <span className="text-[12px] font-semibold text-muted">Add your own plan</span>
 
-        <label className="flex flex-col gap-1.5">
-          <span className="text-[12px] font-semibold text-muted">Name</span>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder={kind === "locked" ? "e.g. Summer camp fund" : "e.g. Rainy day fund"}
-            maxLength={60}
-            className="border border-border-hairline-strong rounded-[10px] px-3.5 py-3 text-[14.5px] text-emerald-dark outline-none focus:border-emerald bg-card"
-          />
-        </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-[12px] font-semibold text-muted">Name</span>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={kind === "locked" ? "e.g. Summer camp fund" : "e.g. Rainy day fund"}
+              maxLength={60}
+              className="border border-border-hairline-strong rounded-[10px] px-3.5 py-3 text-[14.5px] text-emerald-dark outline-none focus:border-emerald bg-card"
+            />
+          </label>
 
-        {kind === "locked" && (
+          {kind === "locked" && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[12px] font-semibold text-muted">Locked for</span>
+              <div className="flex items-center gap-3 bg-card rounded-2xl px-4 py-3 border border-border-hairline">
+                <button
+                  type="button"
+                  onClick={() => setLockMonths((m) => Math.max(1, m - 1))}
+                  className="w-9 h-9 shrink-0 rounded-full bg-tint-neutral text-emerald-dark font-semibold text-[18px] cursor-pointer"
+                  aria-label="Fewer months"
+                >
+                  −
+                </button>
+                <span className="flex-1 text-center font-serif font-semibold text-[18px] text-emerald-dark">
+                  {lockMonths} {lockMonths === 1 ? "month" : "months"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setLockMonths((m) => Math.min(120, m + 1))}
+                  className="w-9 h-9 shrink-0 rounded-full bg-tint-neutral text-emerald-dark font-semibold text-[18px] cursor-pointer"
+                  aria-label="More months"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-col gap-1.5">
-            <span className="text-[12px] font-semibold text-muted">Locked for</span>
+            <span className="text-[12px] font-semibold text-muted">Monthly interest rate</span>
             <div className="flex items-center gap-3 bg-card rounded-2xl px-4 py-3 border border-border-hairline">
               <button
                 type="button"
-                onClick={() => setLockMonths((m) => Math.max(1, m - 1))}
+                onClick={() => setRate((r) => clampRate(r - 0.1))}
                 className="w-9 h-9 shrink-0 rounded-full bg-tint-neutral text-emerald-dark font-semibold text-[18px] cursor-pointer"
-                aria-label="Fewer months"
+                aria-label="Decrease"
               >
                 −
               </button>
-              <span className="flex-1 text-center font-serif font-semibold text-[18px] text-emerald-dark">
-                {lockMonths} {lockMonths === 1 ? "month" : "months"}
+              <span className="flex-1 text-center font-serif font-semibold text-[22px] text-emerald-dark">
+                {rate.toFixed(1)}%
+                <span className="text-[13px] font-sans font-normal text-muted"> / month</span>
               </span>
               <button
                 type="button"
-                onClick={() => setLockMonths((m) => Math.min(120, m + 1))}
+                onClick={() => setRate((r) => clampRate(r + 0.1))}
                 className="w-9 h-9 shrink-0 rounded-full bg-tint-neutral text-emerald-dark font-semibold text-[18px] cursor-pointer"
-                aria-label="More months"
+                aria-label="Increase"
               >
                 +
               </button>
             </div>
+            <p className="text-[11.5px] text-muted/80">
+              ≈ {annualFromMonthly(rate).toFixed(1)}%/year once it compounds.
+            </p>
           </div>
-        )}
 
-        <div className="flex flex-col gap-1.5">
-          <span className="text-[12px] font-semibold text-muted">Monthly interest rate</span>
-          <div className="flex items-center gap-3 bg-card rounded-2xl px-4 py-3 border border-border-hairline">
-            <button
-              type="button"
-              onClick={() => setRate((r) => clampRate(r - 0.1))}
-              className="w-9 h-9 shrink-0 rounded-full bg-tint-neutral text-emerald-dark font-semibold text-[18px] cursor-pointer"
-              aria-label="Decrease"
-            >
-              −
-            </button>
-            <span className="flex-1 text-center font-serif font-semibold text-[22px] text-emerald-dark">
-              {rate.toFixed(1)}%<span className="text-[13px] font-sans font-normal text-muted"> / month</span>
-            </span>
-            <button
-              type="button"
-              onClick={() => setRate((r) => clampRate(r + 0.1))}
-              className="w-9 h-9 shrink-0 rounded-full bg-tint-neutral text-emerald-dark font-semibold text-[18px] cursor-pointer"
-              aria-label="Increase"
-            >
-              +
-            </button>
-          </div>
-          <p className="text-[11.5px] text-muted/80">
-            ≈ {annualFromMonthly(rate).toFixed(1)}%/year once it compounds.
-          </p>
+          <button
+            type="button"
+            disabled={creating || !name.trim()}
+            onClick={handleCreate}
+            className="bg-emerald text-white text-center min-h-11 py-[13px] rounded-xl text-[14px] font-semibold disabled:opacity-50 cursor-pointer"
+          >
+            {creating ? "Creating…" : "Create plan"}
+          </button>
         </div>
-
-        <button
-          type="button"
-          disabled={creating || !name.trim()}
-          onClick={handleCreate}
-          className="bg-emerald text-white text-center min-h-11 py-[13px] rounded-xl text-[14px] font-semibold disabled:opacity-50 cursor-pointer"
-        >
-          {creating ? "Creating…" : "Create plan"}
-        </button>
       </div>
 
       {deleteTarget && (
@@ -372,20 +399,13 @@ export function SavingsKindForm({
         />
       )}
 
-      {changeSheet && (
-        <SavingsChangesSheet
-          affected={changeSheet}
-          working={saving}
-          onClose={() => setChangeSheet(null)}
-          onJustSave={() => runSave(applyToggles)}
-          onCashOutAndSave={() =>
-            runSave(async () => {
-              for (const { plan } of changeSheet) {
-                await api.post(`/family/savings-plans/${plan.id}/cash-out`, token!);
-              }
-              await applyToggles();
-            })
-          }
+      {leftovers && (
+        <SavingsLeftoversSheet
+          leftovers={leftovers}
+          busyId={leftoverBusy}
+          onClose={() => setLeftovers(null)}
+          onCashOut={(plan) => resolveLeftover(plan, "cash-out")}
+          onReopen={(plan) => resolveLeftover(plan, "reopen")}
         />
       )}
     </div>

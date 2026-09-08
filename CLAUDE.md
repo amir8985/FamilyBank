@@ -179,6 +179,25 @@ Rate is a monthly percentage, compounded daily on read.
     returns a `Result`, not subscriptable — must iterate it into a dict
     (`{k: v for k, v in await session.execute(...)}`), don't `dict(...)`
     it directly.
+- **Fifth round (frontend only, no backend/migration change):**
+  - The kind settings pages' **"Save changes" button is now a sticky bar
+    pinned to the top** of the scroll area (only when there are staged
+    changes) — the user wanted it visible without scrolling.
+  - The pre-save confirm gate is **gone**. Save just applies the toggle
+    changes; then, if any switched-off plan of that kind still holds a
+    deposit, `SavingsLeftoversSheet` (renamed from `SavingsChangesSheet`)
+    opens as a **post-save** prompt listing each such plan with a per-kid
+    breakdown and two buttons per plan — **"Cash out"** (`POST
+    /family/savings-plans/{id}/cash-out`) or **"Switch back on"**
+    (`POST /family/savings-presets` for a preset, `PATCH
+    {is_active:true}` for a custom plan) — plus "Done". This is the
+    **only** place cash-out is offered now (no standalone button on the
+    page). To find the leftovers after Save, it re-fetches
+    `/family/savings-plans` directly rather than waiting out
+    `router.refresh()`.
+  - The hub's orange **"Savings still growing"** pill is now a tappable
+    `HubStillGrowingBadge` — tap reveals a one-liner, same pattern as
+    the boost badge / the per-plan `StillGrowingBadge`.
 - **Deferred, still**: "interest from parent" as a *separate* flat
   cash-balance rate — this savings-plans feature is the more general
   version of that idea, so it may now be moot; confirm with the user
