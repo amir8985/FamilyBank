@@ -1,0 +1,63 @@
+# Auto-deploy pipeline for the backend on Cloud Run — the equivalent of
+# Render's "push to master redeploys". Wired to a Cloud Build trigger on
+# push to master (see docs/cloud-run-migration.md, Part 4).
+#
+# Frontend stays on Vercel and is not touched here.
+
+substitutions:
+  _REGION: europe-west3        # Frankfurt — same region as the Neon database
+  _REPO: familybank            # Artifact Registry repo
+  _SERVICE: familybank-backend
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/DATABASE_URL/versions/latest
+      env: DATABASE_URL
+
+steps:
+  # 1. Build the image, tagged with the commit SHA (immutable) and :latest.
+  - name: gcr.io/cloud-builders/docker
+    id: build
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$SHORT_SHA
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest
+      - backend
+
+  - name: gcr.io/cloud-builders/docker
+    id: push
+    args: [push, --all-tags, "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}"]
+
+  # 2. Run migrations ONCE, before the new revision goes live. Not in the
+  #    Dockerfile (every autoscaled container would race) and not on
+  #    startup. Uses the freshly-built image's alembic + the repo's
+  #    migration files against the real DB (Neon is public, no proxy
+  #    needed). If this step fails, the deploy step below never runs.
+  - name: ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$SHORT_SHA
+    id: migrate
+    entrypoint: alembic
+    args: [upgrade, head]
+    dir: backend
+    secretEnv: [DATABASE_URL]
+
+  # 3. Deploy. No --set-env-vars / --set-secrets here: those are set once
+  #    on the first manual deploy and gcloud preserves them across
+  #    image-only redeploys (see the migration doc, Part 3).
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    id: deploy
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$SHORT_SHA
+      - --region=${_REGION}
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$SHORT_SHA
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest
+
+options:
+  logging: CLOUD_LOGGING_ONLY

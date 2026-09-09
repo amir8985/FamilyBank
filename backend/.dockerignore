@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+.env
+.env.*
+!.env.example
+uvicorn.log
+*.md
+alembic/versions/__pycache__/

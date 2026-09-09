@@ -59,6 +59,17 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True
     scheduler_interval_hours: float = 5.0
 
+    # Staleness fallback (see app/scheduler/jobs.spawn_refresh_if_stale):
+    # when SCHEDULER_ENABLED is false and an *external* cron drives the
+    # refresh (Cloud Scheduler → POST /internal/refresh), a user-facing
+    # read (/home, /catalog) triggers a best-effort catch-up refresh if
+    # the cached prices are older than this. Insurance for a missed cron
+    # run — not the primary mechanism. Must sit well above the normal gap
+    # between runs: the production Cloud Scheduler cron fires every 3h
+    # (`1 */3 * * *` UTC), so ~10h ≈ 3 consecutive missed runs — clearly
+    # abnormal, but far enough out that a single hiccup won't trip it.
+    refresh_staleness_threshold_hours: float = 10.0
+
     # request_logs has no other retention mechanism — every backend
     # request and every client-reported metric writes a row (see
     # app/core/request_logging.py), and nothing ever deletes one. Fine at

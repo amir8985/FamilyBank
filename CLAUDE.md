@@ -30,20 +30,33 @@ backend/    FastAPI + SQLAlchemy + Postgres (Neon) — see backend/README.md
 frontend/   Next.js 16 (App Router) + Tailwind v4 — see frontend/README.md
 ```
 
-## Current status (as of 2026-09-09, branch `kid-pages`)
+## Current status (as of 2026-09-09)
 
-Versions: backend `1.9.0`, frontend `0.10.0`. 146 backend tests pass
-(127 + 19 in `test_kid_auth.py`); `build`+`lint`+`tsc --noEmit` clean.
-Kid login went through **three rounds of user feedback** (opaque URL
-handle, multi-device links, 24h TTL, parent "sign out all devices",
-`/home` poll, "Link a device" wording). **`kid-pages` not yet reviewed
-or merged to `master`** — the
-kid-login feature is implemented + tested + Playwright-verified but has
-NOT been through `finish-feature` (self-review) and merging/pushing is
-gated on explicit user confirmation. `savings-plans` did land on
-`master` earlier (origin/master is at the savings post-merge commit).
-(Note: repo may have moved since — check `git branch`/`git log` for the
-real current state before trusting this section blindly.)
+Two workstreams in flight (check `git branch`/`git log` for real state):
+
+**`kid-pages` — Kid login + kid-facing app (this branch).** Versions:
+backend `1.9.0`, frontend `0.10.0`. 146 backend tests pass (127 + 19 in
+`test_kid_auth.py`); `build`+`lint`+`tsc --noEmit` clean. Went through
+three rounds of user feedback (opaque URL handle, multi-device links,
+24h TTL, parent "sign out all devices", `/home` poll, "Link a device"
+wording), then `finish-feature`. Merged `origin/master` (worker-1's
+scheduler changes) 2026-09-09. **Merging/pushing gated on explicit user
+confirmation** — check before assuming it's live.
+
+**`perf-followups` — Cloud Run migration groundwork (worker-1).** The
+*code* landed on `master` 2026-09-09 (`scheduler/jobs.py`: a Postgres
+session-level advisory lock around `run_refresh()` so overlapping
+triggers don't double-write `price_ticks` — the lock session must hold
+its connection for the whole refresh, don't add a `commit()`; plus
+`spawn_refresh_if_stale(prices_as_of)`, a best-effort catch-up refresh
+`/home`+`/catalog` fire when cached prices are older than
+`refresh_staleness_threshold_hours` — insurance for a missed external
+cron, disabled in tests via `set_stale_fallback_enabled` + an autouse
+fixture). **The GCP move itself is not done** — project, Artifact
+Registry, first deploy, Cloud Build trigger, Cloud Scheduler jobs,
+monitoring alert, the frontend URL cutover, decommissioning Render — all
+in `docs/cloud-run-migration.md`, gated on user action. Replacing the
+Yahoo price fetch is deliberately sequenced after that migration.
 
 Shipped, in order, each reviewed + tested + Playwright-verified against
 the dev server + synthetic test family (`family_id
