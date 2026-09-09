@@ -61,65 +61,33 @@ async def get_family_currency(
     return await _load_family(auth, db)
 
 
-async def _resolve_kid(db: AsyncSession, ref: str, auth: AuthContext) -> Kid:
-    """Turn the `{kid_id}` path segment into a Kid, enforcing isolation.
-
-    - Parent token: `ref` must be a real kid UUID belonging to this
-      family (architecture 5.5 — a foreign kid_id 404s, never leaks).
-    - Kid token: the token itself names the kid; `ref` is cosmetic (it's
-      the kid's opaque `public_id` in the URL). It must still *name this
-      same kid* — the kid's own UUID or public_id — so a hand-edited
-      cross-kid URL 404s exactly like the parent case. The token version
-      must also still be current.
-    """
-    if auth.is_kid:
-        kid = await db.get(Kid, auth.kid_id)
-        if kid is None or kid.token_version != auth.token_version:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, _STALE_KID_SESSION)
-        if ref != str(kid.id) and ref != kid.public_id:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Kid not found")
-        return kid
-
-    try:
-        kid_uuid = uuid.UUID(ref)
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Kid not found") from exc
-    kid = await db.get(Kid, kid_uuid)
-    if kid is None or kid.family_id != auth.family_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Kid not found")
-    return kid
-
-
-async def get_kid(
-    kid_id: str,
-    auth: AuthContext = Depends(get_current_auth),
-    db: AsyncSession = Depends(get_db),
-) -> Kid:
-    return await _resolve_kid(db, kid_id, auth)
-
-
 @dataclass
 class KidAndFamily:
     kid: Kid
     family: Family
 
 
-async def get_kid_and_family(
-    kid_id: str,
-    auth: AuthContext = Depends(get_current_auth),
-    db: AsyncSession = Depends(get_db),
-) -> KidAndFamily:
-    """For routes that need *both* (debt, investing) — one JOIN gets the
-    kid + family row in a single round-trip (see CLAUDE.md's production
-    perf notes; don't split this back into two point-lookups). Isolation
-    is exactly as `_resolve_kid`: a kid_id from another family, or a
-    hand-edited cross-kid URL on a kid session, 404s.
+async def _resolve_kid_and_family(db: AsyncSession, ref: str, auth: AuthContext) -> KidAndFamily:
+    """Turn the `{kid_id}` path segment into a (kid, family), enforcing
+    architecture 5.5 isolation. THE single place this happens — `get_kid`,
+    `get_kid_and_family` and `get_current_kid` all route through here, so
+    there's one thing to audit. One JOIN, one round-trip (the production
+    perf notes: don't split it back into point-lookups).
+
+    - Parent token: `ref` must be a real kid UUID in this family; a
+      foreign or bogus id 404s, never leaks.
+    - Kid token: the token itself names the kid; `ref` is cosmetic (the
+      kid's opaque `public_id` in the URL). It must still name *this*
+      kid — the kid's own UUID or public_id — so a hand-edited cross-kid
+      URL 404s just like the parent case. The token version must also
+      still be current, and the kid must still belong to the token's
+      family (redundant with a signed JWT, kept for defence in depth).
     """
     if auth.is_kid:
         target_id = auth.kid_id
     else:
         try:
-            target_id = uuid.UUID(kid_id)
+            target_id = uuid.UUID(ref)
         except ValueError as exc:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Kid not found") from exc
 
@@ -128,19 +96,41 @@ async def get_kid_and_family(
             select(Kid, Family).join(Family, Family.id == Kid.family_id).where(Kid.id == target_id)
         )
     ).first()
+
+    if auth.is_kid:
+        # A valid kid JWT whose kid/family is gone → "you were signed out"
+        if row is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, _STALE_KID_SESSION)
+        kid, family = row
+        if kid.token_version != auth.token_version or kid.family_id != auth.family_id:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, _STALE_KID_SESSION)
+        if ref != str(kid.id) and ref != kid.public_id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Kid not found")
+        return KidAndFamily(kid=kid, family=family)
+
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Kid not found")
     kid, family = row
-
-    if auth.is_kid:
-        if kid.token_version != auth.token_version:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, _STALE_KID_SESSION)
-        if kid_id != str(kid.id) and kid_id != kid.public_id:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Kid not found")
-    elif kid.family_id != auth.family_id:
+    if kid.family_id != auth.family_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Kid not found")
-
     return KidAndFamily(kid=kid, family=family)
+
+
+async def get_kid(
+    kid_id: str,
+    auth: AuthContext = Depends(get_current_auth),
+    db: AsyncSession = Depends(get_db),
+) -> Kid:
+    return (await _resolve_kid_and_family(db, kid_id, auth)).kid
+
+
+async def get_kid_and_family(
+    kid_id: str,
+    auth: AuthContext = Depends(get_current_auth),
+    db: AsyncSession = Depends(get_db),
+) -> KidAndFamily:
+    """For routes that need *both* (debt, investing)."""
+    return await _resolve_kid_and_family(db, kid_id, auth)
 
 
 async def get_current_kid(
@@ -153,14 +143,4 @@ async def get_current_kid(
     """
     if not auth.is_kid or auth.kid_id is None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "This endpoint is for kid sessions")
-    row = (
-        await db.execute(
-            select(Kid, Family).join(Family, Family.id == Kid.family_id).where(Kid.id == auth.kid_id)
-        )
-    ).first()
-    if row is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Kid not found")
-    kid, family = row
-    if kid.family_id != auth.family_id or kid.token_version != auth.token_version:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, _STALE_KID_SESSION)
-    return KidAndFamily(kid=kid, family=family)
+    return await _resolve_kid_and_family(db, str(auth.kid_id), auth)

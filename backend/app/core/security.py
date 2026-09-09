@@ -73,11 +73,12 @@ def issue_session_token(user_id: uuid.UUID, family_id: uuid.UUID, email: str) ->
 
 
 def issue_kid_session_token(kid_id: uuid.UUID, family_id: uuid.UUID, token_version: int) -> str:
-    """Minted after an invite claim (routes_kid_auth). Same TTL and secret
-    as the parent token — a kid re-authing means the parent has to send a
-    fresh link, so a short TTL would be all downside. `tv` is checked
-    against `kids.token_version` on every request, which is the actual
-    revocation mechanism.
+    """Minted after an invite claim (routes_kid_auth). Same secret as the
+    parent token but a much longer TTL (`kid_jwt_ttl_days`, ~1yr) — a kid
+    re-authing means the parent has to send a fresh link, so a short TTL
+    would be all downside. `tv` is checked against `kids.token_version` on
+    every request; the parent's "sign out of all devices" bumps that,
+    which is the actual revocation mechanism.
     """
     now = datetime.now(timezone.utc)
     payload = {

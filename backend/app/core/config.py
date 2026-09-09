@@ -21,10 +21,10 @@ class Settings(BaseSettings):
     backend_jwt_ttl_days: int = 30
     # Kid session tokens live much longer than a parent's — a kid
     # re-authing means a parent has to generate and send a new link, so a
-    # short TTL is all downside. Revocation is handled by kids.token_version
-    # (bumped on every claim), not by expiry. ~1 year: a kid who uses the
-    # app at all never hits it; one who hasn't opened it in a year getting
-    # a fresh link is reasonable.
+    # short TTL is all downside. Revocation is the parent's explicit "sign
+    # out of all devices" (bumps kids.token_version), not expiry. ~1 year:
+    # a kid who uses the app at all never hits it; one who hasn't opened
+    # it in a year getting a fresh link is reasonable.
     kid_jwt_ttl_days: int = 365
 
     # Shared secret the scheduler's cron trigger must present.

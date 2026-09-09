@@ -163,33 +163,33 @@ function FamilyStoreRoot({
   }, []);
 
   // Freshness nets for changes this tab didn't make — a kid trading in
-  // their own app, or the parent acting in another tab. Reconcile when
-  // the tab regains focus, and poll on a slow interval while it's
-  // visible (paused while hidden so a backgrounded tab costs nothing).
+  // their own app, or the parent acting in another tab. Reconcile the
+  // moment the tab becomes visible again, and keep a slow poll running
+  // only while it's visible (a backgrounded tab costs nothing). The
+  // initial seed is fresh, so mounting doesn't trigger an immediate
+  // refetch — only a genuine hidden→visible transition does.
   useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState === "visible") refreshHome();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-
     let timer: ReturnType<typeof setInterval> | null = null;
-    const startPoll = () => {
-      if (timer || document.visibilityState !== "visible") return;
-      timer = setInterval(() => {
-        if (document.visibilityState === "visible") refreshHome();
-      }, 30_000);
-    };
     const stopPoll = () => {
       if (timer) clearInterval(timer);
       timer = null;
     };
-    const onVis = () => (document.visibilityState === "visible" ? startPoll() : stopPoll());
-    document.addEventListener("visibilitychange", onVis);
-    startPoll();
+    const startPoll = () => {
+      if (!timer) timer = setInterval(refreshHome, 30_000);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        refreshHome();
+        startPoll();
+      } else {
+        stopPoll();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    if (document.visibilityState === "visible") startPoll();
 
     return () => {
-      document.removeEventListener("visibilitychange", onVisible);
-      document.removeEventListener("visibilitychange", onVis);
+      document.removeEventListener("visibilitychange", onVisibility);
       stopPoll();
     };
   }, [refreshHome]);

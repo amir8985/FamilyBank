@@ -35,13 +35,17 @@ frontend/   Next.js 16 (App Router) + Tailwind v4 — see frontend/README.md
 Two workstreams in flight (check `git branch`/`git log` for real state):
 
 **`kid-pages` — Kid login + kid-facing app (this branch).** Versions:
-backend `1.9.0`, frontend `0.10.0`. 146 backend tests pass (127 + 19 in
-`test_kid_auth.py`); `build`+`lint`+`tsc --noEmit` clean. Went through
-three rounds of user feedback (opaque URL handle, multi-device links,
-24h TTL, parent "sign out all devices", `/home` poll, "Link a device"
-wording), then `finish-feature`. Merged `origin/master` (worker-1's
-scheduler changes) 2026-09-09. **Merging/pushing gated on explicit user
-confirmation** — check before assuming it's live.
+backend `1.9.0`, frontend `0.10.0`. 153 backend tests pass (146 + 7 from
+worker-1's merged scheduler work; 19 of the total in `test_kid_auth.py`);
+`build`+`lint`+`tsc --noEmit` clean; interactively Playwright-verified.
+Went through three rounds of user feedback (opaque URL handle,
+multi-device links, 24h TTL, parent "sign out all devices", `/home`
+poll, "Link a device" wording) + `origin/master` merged in (worker-1's
+scheduler changes; conflicts: `main.py` version → 1.9.0, `CLAUDE.md`
+status) + a `finish-feature` review pass (folded `get_kid`/`get_kid_and_family`/
+`get_current_kid` isolation into one `_resolve_kid_and_family`; fixed
+stale comments; merged the `/home` poll's two visibility listeners).
+**Merging/pushing to `master` gated on explicit user confirmation.**
 
 **`perf-followups` — Cloud Run migration groundwork (worker-1).** The
 *code* landed on `master` 2026-09-09 (`scheduler/jobs.py`: a Postgres
@@ -157,15 +161,16 @@ account. After that they're signed in for good on those devices.
   (`POST /kids/{id}/sign-out-all`, `kid_auth_service.sign_out_all`) — for
   a lost phone. An ordinary claim does NOT bump it (claiming is additive
   — another device, same account). The kid JWT embeds the value it was
-  minted with; `deps._resolve_kid` / `get_current_kid` 401 a token whose
+  minted with; `deps._resolve_kid_and_family` (the single isolation checkpoint for `get_kid`/`get_kid_and_family`/`get_current_kid`) 401s a token whose
   `tv` no longer matches.
 - **`kids.public_id`** (opaque 16-hex handle, `_new_public_id`): what
   appears in every kid URL (`/kid/kids/<public_id>`) — the primary key is
   never exposed. Backend `/kids/{kid_id}/*` routes take `kid_id` as
-  `str`; `deps._resolve_kid` accepts a real UUID (parent token) or the
+  `str`; `_resolve_kid_and_family` accepts a real UUID (parent token) or the
   kid's own uuid/public_id (kid token — the token names the kid, the
   path segment is cosmetic but must still name *this* kid or it 404s
-  like the cross-family case). `get_kid_and_family` keeps its single JOIN.
+  like the cross-family case). One JOIN gets kid+family in a round-trip
+  for both token kinds.
 - **`kids.sessions_active`** (bool): true once any device has claimed,
   false after sign-out-all. Drives whether Settings shows the sign-out
   button.
@@ -179,7 +184,7 @@ account. After that they're signed in for good on those devices.
   (long on purpose — re-auth means a parent has to act). Minted by
   `POST /kid-auth/claim` (unauthenticated + coarse per-IP rate limit).
 - **Backend authz**: `deps.get_kid`/`get_kid_and_family` resolve via
-  `_resolve_kid` (sibling / hand-edited cross-kid URL → 404) + version.
+  `_resolve_kid_and_family` (one JOIN, one place to audit — sibling / hand-edited cross-kid URL → 404, stale/foreign kid token → 401).
   `deps.get_family`
   **rejects kid tokens outright** (covers all `/family/*`, `/home`,
   savings-plan mgmt in one place); `get_family_currency` is the kid-OK

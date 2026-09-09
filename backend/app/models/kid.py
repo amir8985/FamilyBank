@@ -38,7 +38,7 @@ class Kid(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     # (`/kid/kids/<public_id>`) instead of the primary key — so no
     # internal id, and nothing enumerable, is ever exposed in a link the
     # kid keeps. Backend routes accept it in place of the UUID for a kid
-    # session (see app/api/deps._resolve_kid).
+    # session (see app/api/deps._resolve_kid_and_family).
     public_id: Mapped[str] = mapped_column(
         unique=True, index=True, default=_new_public_id
     )
@@ -47,7 +47,7 @@ class Kid(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     # devices" action (routes_kid_auth) — NOT by an ordinary claim, so a
     # kid can add a second device (phone + laptop) off the same invite
     # without knocking the first offline. A kid session JWT embeds the
-    # value it was minted with; deps._enforce_kid_scope 401s a token
+    # value it was minted with; deps._resolve_kid_and_family 401s a token
     # whose value no longer matches.
     token_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
