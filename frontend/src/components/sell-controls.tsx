@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useSession } from "next-auth/react";
 import { Money } from "@/components/ui/money";
+import { useFamily } from "@/lib/family-store";
 import { api, ApiError } from "@/lib/api";
 import { defaultUnitStep, formatMoney, trimUnits } from "@/lib/format";
 import type { HoldingOut, InvestmentTransactionOut } from "@/lib/types";
@@ -30,7 +30,7 @@ export function SellControls({
   currency: string;
   onSold: () => void;
 }) {
-  const { data: session } = useSession();
+  const { token } = useFamily();
 
   const totalUnits = Number(holding.units);
   const pricePerUnit = totalUnits > 0 ? Number(holding.current_value) / totalUnits : 0;
@@ -68,11 +68,11 @@ export function SellControls({
   }
 
   async function handleConfirm() {
-    if (!session?.backendToken || !valid) return;
+    if (!token || !valid) return;
     setSubmitting(true);
     setError(null);
     try {
-      await api.post<InvestmentTransactionOut>(`/kids/${kidId}/sell`, session.backendToken, {
+      await api.post<InvestmentTransactionOut>(`/kids/${kidId}/sell`, token, {
         ...(holding.lot_id ? { lot_id: holding.lot_id } : { symbol: holding.symbol }),
         units,
       });

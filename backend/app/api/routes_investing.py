@@ -26,6 +26,7 @@ async def get_portfolio(
     db: AsyncSession = Depends(get_db),
 ) -> PortfolioOut:
     data = await investing_service.get_portfolio(db, kid_family.kid, kid_family.family.base_currency)
+    data["boost_buffer_rate"] = kid_family.family.boost_buffer_rate
     return PortfolioOut(**data)
 
 

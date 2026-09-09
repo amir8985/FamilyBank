@@ -2,7 +2,6 @@
 
 import { use } from "react";
 import { notFound } from "next/navigation";
-import { useSession } from "next-auth/react";
 import { useFamily } from "@/lib/family-store";
 import { useCachedResource } from "@/lib/use-cached-resource";
 import { api, ApiError } from "@/lib/api";
@@ -16,9 +15,7 @@ export default function LotDetailPage({
   params: Promise<{ kidId: string; lotId: string }>;
 }) {
   const { kidId, lotId } = use(params);
-  const { data: session } = useSession();
-  const { home } = useFamily();
-  const token = session?.backendToken ?? null;
+  const { home, token } = useFamily();
   const summary = home.kids.find((k) => k.id === kidId);
 
   const lotRes = useCachedResource<LotDetailOut>(

@@ -5,9 +5,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_family, get_kid
+from app.api.deps import get_family, get_kid, require_parent
 from app.core.db import get_db
-from app.core.security import AuthContext, get_current_auth
+from app.core.security import AuthContext
 from app.models.family import Family
 from app.models.kid import AVATAR_PALETTE, Kid
 from app.schemas.kid import FamilyHome, KidCreate, KidSummary
@@ -61,7 +61,7 @@ async def get_family_home(
 @router.post("/kids", response_model=KidSummary, status_code=201)
 async def create_kid(
     body: KidCreate,
-    auth: AuthContext = Depends(get_current_auth),
+    auth: AuthContext = Depends(require_parent),
     db: AsyncSession = Depends(get_db),
 ) -> KidSummary:
     count = len((await db.scalars(select(Kid.id).where(Kid.family_id == auth.family_id))).all())
@@ -82,7 +82,7 @@ async def create_kid(
     )
 
 
-@router.delete("/kids/{kid_id}", status_code=204)
+@router.delete("/kids/{kid_id}", status_code=204, dependencies=[Depends(require_parent)])
 async def delete_kid(kid: Kid = Depends(get_kid), db: AsyncSession = Depends(get_db)) -> None:
     await db.delete(kid)
     await db.commit()

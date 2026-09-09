@@ -1,8 +1,7 @@
 "use client";
 
 import { use } from "react";
-import { useSession } from "next-auth/react";
-import { useFamily } from "@/lib/family-store";
+import { useFamily, useKidLinks } from "@/lib/family-store";
 import { useCachedResource } from "@/lib/use-cached-resource";
 import { api } from "@/lib/api";
 import { PageHeader } from "@/components/ui/page-header";
@@ -16,9 +15,8 @@ export default function KidHistoryPage({
   params: Promise<{ kidId: string }>;
 }) {
   const { kidId } = use(params);
-  const { data: session } = useSession();
-  const { home } = useFamily();
-  const token = session?.backendToken ?? null;
+  const { home, token } = useFamily();
+  const links = useKidLinks(kidId);
   const kid = home.kids.find((k) => k.id === kidId);
 
   const { data: transactions, error } = useCachedResource<DebtTransactionOut[]>(
@@ -33,7 +31,7 @@ export default function KidHistoryPage({
 
   return (
     <div className="max-w-md mx-auto min-h-screen flex flex-col">
-      <PageHeader title={kid ? `${kid.name}'s History` : "History"} backHref="/home" />
+      <PageHeader title={kid ? `${kid.name}'s History` : "History"} backHref={links.home} />
 
       <div className="flex-1 px-5 pt-3 pb-6 flex flex-col gap-2.5">
         {!transactions &&

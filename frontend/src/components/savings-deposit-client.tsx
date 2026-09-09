@@ -1,12 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Money } from "@/components/ui/money";
 import { LotChart } from "@/components/ui/lot-chart";
 import { SavingsKindBadge } from "@/components/ui/savings-badge";
-import { useFamily } from "@/lib/family-store";
+import { useFamily, useKidLinks } from "@/lib/family-store";
 import { invalidateKid } from "@/lib/use-cached-resource";
 import { useToast } from "@/components/ui/toast";
 import { api, ApiError } from "@/lib/api";
@@ -36,9 +35,9 @@ export function SavingsDepositClient({
   kidId: string;
   deposit: SavingsDepositDetailOut;
 }) {
-  const { data: session } = useSession();
   const router = useRouter();
-  const { applyKidBalanceDelta, refreshHome } = useFamily();
+  const { token, applyKidBalanceDelta, refreshHome } = useFamily();
+  const links = useKidLinks(kidId);
   const toast = useToast();
 
   const currency = deposit.currency;
@@ -47,14 +46,13 @@ export function SavingsDepositClient({
   const status = lockStatus(deposit);
 
   function handleWithdraw() {
-    if (!session?.backendToken) return;
+    if (!token) return;
     if (!confirm(`Withdraw ${formatMoney(value, currency)} from ${deposit.plan_name} back to cash?`)) return;
 
-    const token = session.backendToken;
     // Cash goes back up right away and we return to the portfolio — the
     // withdrawal persists in the background.
     const rollback = applyKidBalanceDelta(kidId, value);
-    router.push(`/home/kids/${kidId}`);
+    router.push(links.portfolio);
 
     api
       .post(`/kids/${kidId}/savings/${deposit.deposit_id}/withdraw`, token)
@@ -74,7 +72,7 @@ export function SavingsDepositClient({
 
   return (
     <div className="max-w-md mx-auto min-h-screen flex flex-col">
-      <PageHeader title={deposit.plan_name} backHref={`/home/kids/${kidId}`} />
+      <PageHeader title={deposit.plan_name} backHref={links.portfolio} />
 
       <div className="px-5 pt-3.5 flex flex-col gap-4">
         <div className="flex flex-col gap-1.5">

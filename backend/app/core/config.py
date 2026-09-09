@@ -19,11 +19,30 @@ class Settings(BaseSettings):
     backend_jwt_secret: str
     backend_jwt_algorithm: str = "HS256"
     backend_jwt_ttl_days: int = 30
+    # Kid session tokens live much longer than a parent's — a kid
+    # re-authing means a parent has to generate and send a new link, so a
+    # short TTL is all downside. Revocation is handled by kids.token_version
+    # (bumped on every claim), not by expiry. ~1 year: a kid who uses the
+    # app at all never hits it; one who hasn't opened it in a year getting
+    # a fresh link is reasonable.
+    kid_jwt_ttl_days: int = 365
 
     # Shared secret the scheduler's cron trigger must present.
     internal_scheduler_secret: str
 
     cors_origins: str = "http://localhost:3000"
+
+    # Where the kid-facing app lives — used only to build the invite link
+    # a parent shares (routes_kid_auth). Defaults to the first CORS origin
+    # if left unset.
+    frontend_base_url: str = ""
+
+    # Kid invite (routes_kid_auth): how long a generated link + PIN stays
+    # usable (it's multi-use within this window — phone + laptop off one
+    # link), and how many wrong-PIN tries before it's burned and the
+    # parent must generate a new one.
+    kid_invite_ttl_hours: int = 24
+    kid_claim_max_attempts: int = 5
 
     default_base_currency: str = "USD"
 
@@ -53,6 +72,16 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def frontend_origin(self) -> str:
+        """Base URL for links pointed back at the web app. Explicit
+        FRONTEND_BASE_URL wins; otherwise fall back to the first CORS
+        origin (which in every real deployment is the web app)."""
+        if self.frontend_base_url.strip():
+            return self.frontend_base_url.strip().rstrip("/")
+        origins = self.cors_origin_list
+        return origins[0].rstrip("/") if origins else "http://localhost:3000"
 
 
 @lru_cache

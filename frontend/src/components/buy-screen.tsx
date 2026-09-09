@@ -1,17 +1,15 @@
 "use client";
 
 import { notFound } from "next/navigation";
-import { useSession } from "next-auth/react";
-import { useFamily } from "@/lib/family-store";
+import { useFamily, useKidLinks } from "@/lib/family-store";
 import { useCachedResource } from "@/lib/use-cached-resource";
 import { api, ApiError } from "@/lib/api";
 import { BuyFormClient } from "@/components/buy-form-client";
 import { BuySkeleton } from "@/components/skeletons";
-import type { AssetDetailOut, FamilySettings, PortfolioOut } from "@/lib/types";
+import type { AssetDetailOut, PortfolioOut } from "@/lib/types";
 
 const ASSET_TTL_MS = 10 * 60_000;
 const PORTFOLIO_TTL_MS = 15_000;
-const SETTINGS_TTL_MS = 5 * 60_000;
 
 export function BuyScreen({
   kidId,
@@ -22,9 +20,8 @@ export function BuyScreen({
   symbol: string;
   backTab: "holdings" | "buy";
 }) {
-  const { data: session } = useSession();
-  const { home } = useFamily();
-  const token = session?.backendToken ?? null;
+  const { home, token } = useFamily();
+  const links = useKidLinks(kidId);
   const summary = home.kids.find((k) => k.id === kidId);
 
   const assetRes = useCachedResource<AssetDetailOut>(
@@ -36,11 +33,6 @@ export function BuyScreen({
     token ? `portfolio:${kidId}` : null,
     () => api.get<PortfolioOut>(`/kids/${kidId}/portfolio`, token as string),
     { ttlMs: PORTFOLIO_TTL_MS }
-  );
-  const settingsRes = useCachedResource<FamilySettings>(
-    token ? "family-settings" : null,
-    () => api.get<FamilySettings>("/family/settings", token as string),
-    { ttlMs: SETTINGS_TTL_MS }
   );
 
   if (assetRes.error instanceof ApiError && assetRes.error.status === 404) notFound();
@@ -74,10 +66,10 @@ export function BuyScreen({
       asset={assetRes.data}
       currency={home.base_currency}
       cashAvailable={cashAvailable}
-      backHref={`/home/kids/${kidId}?tab=${backTab}`}
+      backHref={`${links.portfolio}?tab=${backTab}`}
       matchingHoldings={matchingHoldings}
       sellableHolding={sellableHolding}
-      boostBufferRate={settingsRes.data?.boost_buffer_rate ?? null}
+      boostBufferRate={portfolio?.boost_buffer_rate ?? null}
     />
   );
 }

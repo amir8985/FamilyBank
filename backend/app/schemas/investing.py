@@ -61,6 +61,11 @@ class PortfolioOut(BaseModel):
     total_day_change_amount: Decimal
     total_day_change_pct: Decimal | None
     holdings: list[HoldingOut]
+    # The family's current monthly boost rate (percent), or None if boost
+    # is off — surfaced here so the buy screen can preview a boosted lot
+    # without a separate /family/settings call (which a kid session can't
+    # make anyway). See CLAUDE.md "Stock boost feature".
+    boost_buffer_rate: Decimal | None = None
     # When the scheduler last refreshed the prices behind this response
     # (spec 4.3 — batch updated ~5x/day, never live). Lets the frontend
     # cache price-derived screens with confidence instead of re-fetching

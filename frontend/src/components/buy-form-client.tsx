@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Sparkline } from "@/components/ui/sparkline";
@@ -9,7 +8,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { SellSheet } from "@/components/sell-sheet";
 import { BoostedBadge, BoostedExplanation } from "@/components/ui/boosted-badge";
 import { Money } from "@/components/ui/money";
-import { useFamily } from "@/lib/family-store";
+import { useFamily, useKidLinks } from "@/lib/family-store";
 import { invalidateKid } from "@/lib/use-cached-resource";
 import { api, ApiError } from "@/lib/api";
 import { currencySymbol, defaultUnitStep, formatMoney, formatPct, formatUpdatedAt, trimUnits } from "@/lib/format";
@@ -53,9 +52,9 @@ export function BuyFormClient({
   // create a boosted lot at this rate (see investing_service.buy()).
   boostBufferRate: string | null;
 }) {
-  const { data: session } = useSession();
   const router = useRouter();
-  const { refreshHome } = useFamily();
+  const { token, refreshHome } = useFamily();
+  const links = useKidLinks(kidId);
   const [badgeOpen, setBadgeOpen] = useState(false);
 
   // A "nice" starting quantity so the first thing a kid sees costs
@@ -73,7 +72,7 @@ export function BuyFormClient({
   const [submitting, setSubmitting] = useState(false);
   const [sellOpen, setSellOpen] = useState(false);
 
-  const backendToken = session?.backendToken;
+  const backendToken = token;
 
   useEffect(() => {
     // All state updates happen inside the timeout callback (not
@@ -111,11 +110,11 @@ export function BuyFormClient({
   }
 
   async function handleBuy() {
-    if (!session?.backendToken || !quote) return;
+    if (!token || !quote) return;
     setSubmitting(true);
     setError(null);
     try {
-      await api.post<InvestmentTransactionOut>(`/kids/${kidId}/buy`, session.backendToken, {
+      await api.post<InvestmentTransactionOut>(`/kids/${kidId}/buy`, token, {
         symbol: asset.symbol,
         units: quote.units,
       });
@@ -123,7 +122,7 @@ export function BuyFormClient({
       // refetches, and reconcile the home store's cash/portfolio totals.
       invalidateKid(kidId);
       refreshHome();
-      router.push(`/home/kids/${kidId}`);
+      router.push(links.portfolio);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Something went wrong");
     } finally {

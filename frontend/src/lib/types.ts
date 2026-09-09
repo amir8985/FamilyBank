@@ -196,6 +196,30 @@ export type PortfolioOut = {
   total_day_change_pct: string | null;
   holdings: HoldingOut[];
   prices_as_of: string | null;
+  // Family-wide monthly boost rate (%), or null when boost is off — lets
+  // the buy screen preview a boosted lot without a /family/settings call.
+  boost_buffer_rate: string | null;
+};
+
+export type KidMe = {
+  kid_id: string;
+  public_id: string;
+  name: string;
+  avatar_color: string;
+  family_id: string;
+  base_currency: string;
+};
+
+export type KidInviteStatus = {
+  has_pending_invite: boolean;
+  sessions_active: boolean;
+  expires_at: string | null;
+};
+
+export type KidInviteResult = {
+  claim_url: string;
+  pin: string;
+  expires_at: string;
 };
 
 export type BuySellQuoteResponse = {

@@ -3,7 +3,7 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import KidAndFamily, get_kid_and_family
+from app.api.deps import KidAndFamily, get_kid_and_family, require_parent
 from app.core.db import get_db
 from app.models.debt_transaction import DebtTransaction, DebtTransactionType
 from app.schemas.debt import DebtTransactionCreate, DebtTransactionOut, DebtUpdateResult
@@ -40,7 +40,9 @@ async def list_debt_transactions(
     return [_to_out(r.txn, r.currency, r.previous_currency, r.balance_before, r.balance_after) for r in rows]
 
 
-@router.post("", response_model=DebtUpdateResult, status_code=201)
+@router.post(
+    "", response_model=DebtUpdateResult, status_code=201, dependencies=[Depends(require_parent)]
+)
 async def update_debt(
     body: DebtTransactionCreate,
     kid_family: KidAndFamily = Depends(get_kid_and_family),

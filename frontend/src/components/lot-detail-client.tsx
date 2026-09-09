@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useFamily } from "@/lib/family-store";
+import { useFamily, useKidLinks } from "@/lib/family-store";
 import { invalidateKid } from "@/lib/use-cached-resource";
 import { PageHeader } from "@/components/ui/page-header";
 import { Money } from "@/components/ui/money";
@@ -24,6 +24,7 @@ export function LotDetailClient({
 }) {
   const router = useRouter();
   const { refreshHome } = useFamily();
+  const links = useKidLinks(kidId);
   const [badgeOpen, setBadgeOpen] = useState(false);
 
   // `current_value`/`purchase_price` are per-unit, in the lot's own
@@ -52,7 +53,7 @@ export function LotDetailClient({
 
   return (
     <div className="max-w-md mx-auto min-h-screen flex flex-col">
-      <PageHeader title={lot.display_name} backHref={`/home/kids/${kidId}`} />
+      <PageHeader title={lot.display_name} backHref={links.portfolio} />
 
       <div className="px-5 pt-3.5 flex flex-col gap-4">
         <div className="flex items-center gap-3">
@@ -123,7 +124,7 @@ export function LotDetailClient({
             onSold={() => {
               invalidateKid(kidId);
               refreshHome();
-              router.push(`/home/kids/${kidId}`);
+              router.push(links.portfolio);
             }}
           />
         )}

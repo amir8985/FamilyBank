@@ -5,6 +5,7 @@ import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
 import { Avatar } from "@/components/ui/avatar";
 import { AddKidSheet } from "@/components/add-kid-sheet";
+import { AttachChildSheet } from "@/components/attach-child-sheet";
 import { CurrencyChangeSheet } from "@/components/currency-change-sheet";
 import { useFamily, resetClientCaches } from "@/lib/family-store";
 import { useToast } from "@/components/ui/toast";
@@ -22,6 +23,7 @@ export function SettingsForm() {
   const [currency, setCurrency] = useState(currentCurrency);
   const [changeTarget, setChangeTarget] = useState<string | null>(null);
   const [addKidOpen, setAddKidOpen] = useState(false);
+  const [attachKid, setAttachKid] = useState<KidSummary | null>(null);
   const [resetting, setResetting] = useState(false);
 
   function handleRemoveKid(kid: KidSummary) {
@@ -88,19 +90,32 @@ export function SettingsForm() {
           return (
             <div
               key={kid.id}
-              className="bg-card rounded-2xl px-4 py-3 border border-border-hairline flex items-center justify-between"
+              className="bg-card rounded-2xl border border-border-hairline overflow-hidden"
             >
-              <div className="flex items-center gap-2.5">
-                <Avatar name={kid.name} color={kid.avatar_color} size={32} />
-                <span className="font-semibold text-[14.5px] text-emerald-dark">{kid.name}</span>
+              <div className="px-4 py-3 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <Avatar name={kid.name} color={kid.avatar_color} size={32} />
+                  <span className="font-semibold text-[14.5px] text-emerald-dark truncate">
+                    {kid.name}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() => handleRemoveKid(kid)}
+                  className="text-[12px] font-semibold text-negative cursor-pointer disabled:opacity-40 shrink-0"
+                >
+                  {pending ? "Saving…" : "Remove"}
+                </button>
               </div>
               <button
                 type="button"
                 disabled={pending}
-                onClick={() => handleRemoveKid(kid)}
-                className="text-[12.5px] font-semibold text-negative cursor-pointer disabled:opacity-40"
+                onClick={() => setAttachKid(kid)}
+                className="w-full px-4 py-3 border-t border-border-hairline flex items-center justify-between text-emerald font-semibold text-[13.5px] cursor-pointer disabled:opacity-40"
               >
-                {pending ? "Saving…" : "Remove"}
+                <span>Link a device</span>
+                <span className="text-lg">›</span>
               </button>
             </div>
           );
@@ -116,6 +131,14 @@ export function SettingsForm() {
       </div>
 
       {addKidOpen && <AddKidSheet onClose={() => setAddKidOpen(false)} />}
+
+      {attachKid && (
+        <AttachChildSheet
+          kidId={attachKid.id}
+          kidName={attachKid.name}
+          onClose={() => setAttachKid(null)}
+        />
+      )}
 
       {changeTarget && (
         <CurrencyChangeSheet

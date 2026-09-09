@@ -2,7 +2,7 @@
 
 import { use } from "react";
 import { notFound } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { useFamily } from "@/lib/family-store";
 import { useCachedResource } from "@/lib/use-cached-resource";
 import { api, ApiError } from "@/lib/api";
 import { SavingsDepositClient } from "@/components/savings-deposit-client";
@@ -15,8 +15,7 @@ export default function SavingsDepositPage({
   params: Promise<{ kidId: string; depositId: string }>;
 }) {
   const { kidId, depositId } = use(params);
-  const { data: session } = useSession();
-  const token = session?.backendToken ?? null;
+  const { token } = useFamily();
 
   const res = useCachedResource<SavingsDepositDetailOut>(
     token ? `savings-deposit:${kidId}:${depositId}` : null,

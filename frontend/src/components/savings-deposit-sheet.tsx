@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useSession } from "next-auth/react";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { useFamily } from "@/lib/family-store";
 import { invalidateKid } from "@/lib/use-cached-resource";
@@ -29,8 +28,7 @@ export function SavingsDepositSheet({
   currency: string;
   onClose: () => void;
 }) {
-  const { data: session } = useSession();
-  const { applyKidBalanceDelta, refreshHome } = useFamily();
+  const { token, applyKidBalanceDelta, refreshHome } = useFamily();
   const toast = useToast();
   const [amount, setAmount] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -40,10 +38,9 @@ export function SavingsDepositSheet({
   const locked = plan.lock_months > 0;
 
   function handleConfirm() {
-    if (!session?.backendToken || parsed <= 0 || tooMuch || submitting) return;
+    if (!token || parsed <= 0 || tooMuch || submitting) return;
     setSubmitting(true);
 
-    const token = session.backendToken;
     // Apply immediately and close — the cash drop is all the parent needs
     // to see. The new deposit row fills in when the background
     // invalidate + refetch lands (same as buy/sell, which don't

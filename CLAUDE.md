@@ -1,1865 +1,580 @@
 # FamilyBank — Handoff / Orientation
 
 Read this first. `FamilyBank_spec.md` and `FamilyBank_architecture.md` are
-the product/architecture source of truth; `design_handoff_familybank/`
-has the visual design. This file is session-to-session state: what's
-built, what's verified, what's not done, and the non-obvious lessons
-learned while building it — read it before starting new work, and update
-it when you finish a session of meaningful work (especially if you hit
-and fixed a real bug — the "Lessons learned" section exists so the next
-session doesn't reintroduce it).
+the product/architecture source of truth; `design_handoff_familybank/` has
+the visual design. This file is session-to-session state — read it before
+new work, update it after meaningful work (especially bugs fixed — the
+"Lessons learned" section exists so the next session doesn't reintroduce
+them). **This is a condensed version (2026-09-09)** — full narrative/
+reasoning for anything summarized here is in `git log`; if a bullet here
+doesn't give you enough to proceed safely, check the file's git history
+before guessing.
 
 ## Talking to the user
 
-The user does not read most of a long response, especially not the
-opening — skims are the default, not the exception. So: end every
-response (not just this file's own updates) with a short, plain-language
-summary of what actually matters — what changed, what's blocked, what
-needs a decision from them, what to do next. Put it last, after the
-detailed work, not only at the top. Don't rely on them having read the
-play-by-play above it.
+The user skims, doesn't read top-to-bottom. End every response with a
+short plain-language summary of what changed/is blocked/needs a decision,
+placed last, not only at the top.
+
+**Always reply to the user in English**, even when they write in Hebrew.
 
 ## What this is
 
 Parents track allowance/debt owed to their kids; kids "invest" that
 virtual balance in real stocks/indices at real market prices. No real
 broker, no real money movement — see spec section 0 for the framing that
-has to stay sharp on every screen.
+must stay sharp on every screen.
 
 ```
 backend/    FastAPI + SQLAlchemy + Postgres (Neon) — see backend/README.md
 frontend/   Next.js 16 (App Router) + Tailwind v4 — see frontend/README.md
 ```
 
+## Current status (as of 2026-09-09, branch `kid-pages`)
 
-## Status as of 2026-09-08 — savings plans (backend v1.8.0 / frontend v0.9.0)
+Versions: backend `1.9.0`, frontend `0.10.0`. 146 backend tests pass
+(127 + 19 in `test_kid_auth.py`); `build`+`lint`+`tsc --noEmit` clean.
+Kid login went through **three rounds of user feedback** (opaque URL
+handle, multi-device links, 24h TTL, parent "sign out all devices",
+`/home` poll, "Link a device" wording). **`kid-pages` not yet reviewed
+or merged to `master`** — the
+kid-login feature is implemented + tested + Playwright-verified but has
+NOT been through `finish-feature` (self-review) and merging/pushing is
+gated on explicit user confirmation. `savings-plans` did land on
+`master` earlier (origin/master is at the savings post-merge commit).
+(Note: repo may have moved since — check `git branch`/`git log` for the
+real current state before trusting this section blindly.)
 
-**Done, reviewed, tested, AND merged with `origin/master`'s "Instant UX"
-feature — the savings additions were reworked to fit that architecture
-(optimistic writes, client-side caches). On branch `savings-plans`.
-Push / merge to `master` is gated on explicit user confirmation per this
-project's rules — check whether that's happened before assuming it's live.**
+Shipped, in order, each reviewed + tested + Playwright-verified against
+the dev server + synthetic test family (`family_id
+00000000-0000-0000-0000-000000000001`):
 
-### Instant-UX adaptation (merge round, 2026-09-08)
+1. **Core v1** (sign-in → onboarding → home → kid portfolio → buy →
+   history → settings), currency conversion with real balance conversion
+   + per-row currency history, launch-compliance (privacy/terms pages,
+   consent gate, `users.consent_accepted_at`).
+2. **Request/perf logging** (`request_logs` table, `RequestLoggingMiddleware`,
+   `/internal/client-metrics` client-timing beacon) + the resulting
+   perf investigation (see "Production performance" below).
+3. **Stock boost feature**: family-wide `boost_buffer_rate` that adds to
+   a stock's return only on up-ticks; per-lot purchases (`investment_lots`,
+   replacing avg-cost `investment_holdings`); `price_ticks` table for
+   since-purchase history; sell-and-rebuy migration endpoint for changing
+   the rate with open positions.
+4. **Instant UX**: client-side `/home` store + optimistic writes, no more
+   full-page freezes on slow backend.
+5. **Savings plans**: parent-defined savings plans (flexible/locked) a
+   kid can move cash into, compounding monthly.
+6. **Kid login + kid app** (latest, branch `kid-pages`, NOT yet
+   reviewed/merged): kids get their own `/kid` area — invite = link +
+   spoken PIN, one-time entry, silent thereafter.
 
-`origin/master` gained worker-1's Instant-UX feature (client `/home`
-store `lib/family-store.tsx`, SWR cache `lib/use-cached-resource.ts`,
-`ui/toast.tsx`, optimistic writes) while this branch was in progress.
-The savings feature now follows the same rules:
+### Savings plans — what it is and key decisions
 
-- **Kid portfolio** (`kid-portfolio-screen.tsx`): savings is a
-  `useCachedResource("savings:{kidId}")` alongside master's
-  portfolio/catalog resources; `PortfolioClient` got `savings` +
-  `savingsLoading` props and row skeletons, on top of master's 2-tab
-  base (re-applied the 3-tab Portfolio/Invest/Save + "& Savings" header
-  + Savings section + Save tab).
-- **Deposit / withdraw** (`savings-deposit-sheet.tsx`,
-  `savings-deposit-client.tsx`): optimistic like `debt-sheet.tsx` —
-  `applyKidBalanceDelta(-amount)` / `(+value)`, close or navigate
-  immediately, background POST → `invalidateKid` + `refreshHome`,
-  `.catch` → rollback + `toast`. **`invalidateKid()` (in
-  `use-cached-resource.ts`) now also drops `savings:{kid}` /
-  `savings-deposit:{kid}:`** — add any new per-kid savings cache key to
-  that list.
-- **Settings hub + kind pages**: client components reading
-  `useCachedResource("savings-plans" / "savings-presets" /
-  "family-settings")`. `savings/[kind]/page.tsx` passes
-  `plansRes.mutate` / `.revalidate` into `SavingsKindForm`.
-- **`SavingsKindForm` toggle Save**: `pendingChanges()` snapshots the
-  staged diff **before** `optimisticApply()` mutates the plans cache
-  (the mutate would otherwise make the changes look already-applied and
-  skip the API calls). `sig`-prune keeps a still-pending selection if a
-  failed save rolls the cache back.
-- **Cash-out**: `cashOutOne()` → POST + `invalidateKid` per affected
-  kid + `refreshHome`. `confirmCashOut` keeps its sheet open with a
-  "Working…" state (no optimistic visible effect on the settings
-  screen); the delete `ConfirmSheet` closes immediately because the
-  optimistic row-removal is the feedback.
-- Failure surfacing: the settings page has an inline `error` slot
-  (`handleSave`/`handleCreate`/`confirmDelete` use it); the leftovers
-  sheet + closed cash-out sheet have none, so those `toast`.
-
-**Merge conflicts resolved:** `CLAUDE.md`, kid `page.tsx`,
-`settings/investing/page.tsx`, `portfolio-client.tsx`. Backend
-auto-merged — `PortfolioOut` carries both `savings_value` (this branch)
-and `prices_as_of` (master); the "Moved to savings" history label
-survived master's history-page rewrite. 127 backend tests pass;
-`build` + `lint` + `tsc` clean; full Playwright pass of the merged app
-(home → portfolio → optimistic deposit → optimistic withdraw → hub →
-settings toggle-save → leftovers sheet) with zero console errors.
-
-### What it is
-
-Parents define **savings plans** a kid can move cash into; the money
-compounds at a fixed monthly rate. One unified model — a plan is
-**flexible** (`lock_months == 0`, withdraw any time) or **locked**
-(`lock_months > 0`, no withdrawal until it matures, then keeps
-compounding at the same rate until withdrawn). Settings live under
+One unified `savings_plans` model — a plan is **flexible**
+(`lock_months == 0`, withdraw any time) or **locked** (`lock_months > 0`,
+locked until maturity, then keeps compounding until withdrawn). Settings:
 Settings → *Advanced investing & savings* → *Flexible savings* /
-*Locked savings* (two separate screens). The kid sees savings on their
-portfolio screen (now "Investments & **Savings**", tabs
-**Portfolio / Invest / Save**).
+*Locked savings*. Kid sees it on portfolio screen, tabs
+Portfolio/Invest/Save.
 
-### Key decisions (why it's shaped this way)
-
-- **One `savings_plans` model, not "flexible rate + locked plans"
-  separately** — a mid-design call by the user. The parent only
-  creates / deletes / switches plans on and off. Every `SavingsDeposit`
-  **snapshots** its plan's `plan_name` / `monthly_rate` / `lock_months`
-  at deposit time, so editing or deleting the `SavingsPlan` never
-  changes money already in it. `savings_deposits.plan_id` is
-  `ON DELETE SET NULL`; the snapshot columns drive all display + math.
-- **`savings_service` is stateless, exactly like `boost_service`** — a
-  deposit's value is `principal * (1 + rate/100) ** (elapsed_days /
-  DAYS_PER_MONTH)`, recomputed on every read, no accrued-interest
-  column, no cron job. Interest only ever grows (no down-ticks), so
-  it's a plain compounding curve, not a tick walk. `DAYS_PER_MONTH =
-  30.4375` (= 365.25/12; matches `boost_service`'s `HOURS_PER_MONTH`).
-- **Withdrawals are whole-deposit-only** (user's call) — closes the
-  deposit and pays principal + accrued interest to the cash ledger via
-  a `debt_transactions` row with the new **`is_savings`** flag (history
-  shows "Moved to savings" / "Savings payout").
-- **Recommended presets** (`savings_service.PRESET_PLANS`, code not
-  seeded): flexible "Flexible plan" 1%/mo; locked 1mo/1.5%, 3mo/2%,
-  6mo/2.5%, 12mo/3%. A parent switches one on with a checkbox → it
-  creates (or reactivates) a `SavingsPlan` row carrying `preset_key`.
-  Changing a preset constant here does **not** retro-change rows
-  already switched on.
-- **Settings pages are a staged form.** Checkboxes only stage; a
-  **sticky "Save changes" bar at the top** commits. If a save switches
-  **off** a plan *this save* left holding a deposit, `SavingsLeftoversSheet`
-  opens afterward with a per-kid breakdown and, per plan, *Cash out* /
-  *Switch back on*. A save that only turns plans **on** never pops that
-  sheet.
+- Every `SavingsDeposit` **snapshots** its plan's name/rate/lock_months at
+  deposit time (`plan_id` is `ON DELETE SET NULL`) — editing/deleting a
+  plan never changes money already in it.
+- `savings_service` is **stateless**, like `boost_service`: value =
+  `principal * (1 + rate/100) ** (elapsed_days / 30.4375)`, recomputed on
+  every read, no accrued-interest column, no cron.
+- Withdrawals are **whole-deposit-only** — closes the deposit, pays
+  principal+interest via a `debt_transactions` row with `is_savings=true`
+  ("Moved to savings" / "Savings payout" in history).
+- Recommended presets in `savings_service.PRESET_PLANS` (code, not
+  seeded) — changing a preset constant does **not** retro-change plans
+  already switched on from it.
+- Settings pages are a **staged form** — checkboxes stage, a sticky "Save
+  changes" bar commits. If a save switches a plan **off** while it still
+  holds a deposit, `SavingsLeftoversSheet` opens with per-kid breakdown +
+  *Cash out* / *Switch back on*.
 - **Cash-out** (`POST /family/savings-plans/{id}/cash-out`) closes every
-  open deposit in one plan across all kids, back to their cash —
-  **overrides the maturity lock on locked deposits** (parent's own
-  money to release). Reachable from a switched-off plan card's "Cash out
-  these savings" button and from the leftovers sheet. There is no
-  page-wide "cash out everything" button (removed at user request).
-- **Parent confirms use `ConfirmSheet`** (amber in-app sheet, new
-  `--color-tint-brass` / `--color-brass-dark` tokens) not `window.confirm()`.
-  The kid-side withdraw still uses native `confirm()` — consistent with
-  the rest of the portfolio/kid surface (`handleSellEverything`).
-- **Hub status pills** per savings kind: green **Active** (a plan is on),
-  brass **Deactivated** (no plan on, whether or not any exist), red
-  **N still growing** (leftover deposits in a switched-off plan — redder
-  because there's real money at stake). All three tap to explain.
-- **`annual_rate` / `annualFromMonthly`** show the *compounded* yearly
-  equivalent next to every monthly rate (2%/mo ≈ 26.8%/yr, not 24%).
-  Backend `savings_service.annual_rate` and frontend `lib/format.ts`
-  must stay in sync.
+  open deposit in a plan across all kids, back to cash — overrides the
+  maturity lock (parent's own money). No page-wide "cash out everything".
+- Parent confirms use `ConfirmSheet` (amber, `--color-tint-brass`), not
+  `window.confirm()`. Kid-side withdraw still uses native `confirm()`.
+- Hub status pills per kind: green Active / brass Deactivated / red "N
+  still growing" (leftovers in an off plan).
+- `annual_rate` shows the *compounded* yearly equivalent next to the
+  monthly rate — keep `savings_service.annual_rate` and frontend
+  `lib/format.ts` in sync.
 
-### Migrations
+Migrations `0012_savings_plans`, `0013_savings_plan_preset_key` — shared
+dev DB is on `0013`.
 
-- `0012_savings_plans` (`0011 → 0012`): `savings_plans`,
-  `savings_deposits`, `debt_transactions.is_savings` (`server_default
-  "false"` — the `is_investment` lesson).
-- `0013_savings_plan_preset_key` (`0012 → 0013`): `savings_plans.preset_key`.
-- Shared dev DB is on `0013`. Checked `alembic current` + every sibling
-  worktree's `versions/` before taking each number.
+**Non-obvious:**
+- `plan_deposit_breakdown` must aggregate **per kid, not per deposit**
+  (React duplicate-key bug otherwise — `SavingsLeftoversSheet` and the
+  cash-out `ConfirmSheet` key lists by `d.kid_id`).
+- `savings-kind-form.tsx`'s staged-state reset uses the adjust-during-
+  render pattern (`if (sig !== lastSig) { setLastSig; setOverride({}) }`)
+  — don't "fix" into `useEffect` (trips lint + wrong tool).
+- `investing_service` imports `savings_service` (for `savings_value` in
+  `get_portfolio`); `savings_service` only imports `debts_db_service` /
+  `fx_service` — no cycle, keep it that way.
 
-### Files
+**Known gaps (not bugs):**
+1. **Home screen doesn't show savings** — a kid's `/home` view shows
+   $100 less cash after a deposit with no savings line anywhere on that
+   screen (only on their detail page). **#1 follow-up.**
+2. Deposit/withdraw POSTs re-fetch full deposit detail (incl. chart
+   series) that the frontend then discards — minor waste.
+3. Mixed-currency summation assumes a cached FX rate exists for a
+   deposit's currency (same tolerance as `investing_service` elsewhere).
+4. Pre-deposit "Locked until ~date" uses calendar-month math vs. backend's
+   30.4375-day math — off by a day or two, copy says "about".
 
-- Backend: `models/savings.py`, `schemas/savings.py`,
-  `services/savings_service.py`, `api/routes_savings.py` (registered in
-  `main.py`), `+is_savings` threaded through `debt_transaction` /
-  `debts_db_service` / `routes_debt` / `schemas/debt`,
-  `investing_service.get_portfolio` adds `savings_value` to `PortfolioOut`.
-- Frontend: `savings-kind-form.tsx` (the big one),
-  `savings-leftovers-sheet.tsx`, `savings-deposit-sheet.tsx`,
-  `savings-deposit-client.tsx`, `ui/confirm-sheet.tsx`,
-  `ui/plan-deposit-marker.tsx`, `ui/hub-savings-badges.tsx`,
-  `ui/savings-badge.tsx`; routes
-  `home/settings/investing/savings/[kind]/` and
-  `home/kids/[kidId]/savings/[depositId]/`; edits to
-  `settings/investing/page.tsx`, `settings-form.tsx`,
-  `portfolio-client.tsx`, `kids/[kidId]/page.tsx`,
-  `kids/[kidId]/history/page.tsx`, `lib/format.ts`, `lib/types.ts`,
-  `globals.css`.
+### Kid login + kid app — what it is and key decisions
 
-### Verified
+Kids get their own way in (spec 4.1 v2). **Auth model, decided with the
+user over three iterations:** parent generates a per-kid invite = a
+shareable **link** + a short **PIN** the parent reads aloud (two
+channels, so a leaked link is useless alone). The link is **multi-use
+for 24h** — the kid opens it on their phone *and* their laptop, all one
+account. After that they're signed in for good on those devices.
 
-- Backend suite **127 passed** (was 101; +26 across
-  `test_savings_service.py` / `test_savings_plans.py`).
-- `npm run build` + `npm run lint` + `tsc --noEmit` clean.
-- Live-tested with Playwright against the dev server + synthetic test
-  family at every feedback round: create/toggle/delete plans, presets,
-  deposit into flexible + locked, per-plan cash-out (incl. locked
-  override), the staged-save + leftovers flow, deposit detail + kid
-  withdraw, the hub pills and their explanations. Zero console errors.
+- **`kids.token_version`** (int) is the revocation lever, bumped ONLY by
+  the parent's explicit **"Sign <name> out of all devices"**
+  (`POST /kids/{id}/sign-out-all`, `kid_auth_service.sign_out_all`) — for
+  a lost phone. An ordinary claim does NOT bump it (claiming is additive
+  — another device, same account). The kid JWT embeds the value it was
+  minted with; `deps._resolve_kid` / `get_current_kid` 401 a token whose
+  `tv` no longer matches.
+- **`kids.public_id`** (opaque 16-hex handle, `_new_public_id`): what
+  appears in every kid URL (`/kid/kids/<public_id>`) — the primary key is
+  never exposed. Backend `/kids/{kid_id}/*` routes take `kid_id` as
+  `str`; `deps._resolve_kid` accepts a real UUID (parent token) or the
+  kid's own uuid/public_id (kid token — the token names the kid, the
+  path segment is cosmetic but must still name *this* kid or it 404s
+  like the cross-family case). `get_kid_and_family` keeps its single JOIN.
+- **`kids.sessions_active`** (bool): true once any device has claimed,
+  false after sign-out-all. Drives whether Settings shows the sign-out
+  button.
+- **`kid_invites`** (one row per kid, replaced on regen): `claim_token_hash`
+  (plain SHA-256 — token is high-entropy), `pin_salt`+`pin_hash` (PBKDF2),
+  `failed_attempts` (burns the invite at `kid_claim_max_attempts`=5),
+  `expires_at` (`kid_invite_ttl_hours`=24), `first_claimed_at`
+  (informational — **multi-use**, never blocks). Wrong-PIN path
+  **commits** `failed_attempts++` before raising.
+- **Kid JWT**: `role:"kid"`, `kid_id`, `tv`. TTL `kid_jwt_ttl_days`=365
+  (long on purpose — re-auth means a parent has to act). Minted by
+  `POST /kid-auth/claim` (unauthenticated + coarse per-IP rate limit).
+- **Backend authz**: `deps.get_kid`/`get_kid_and_family` resolve via
+  `_resolve_kid` (sibling / hand-edited cross-kid URL → 404) + version.
+  `deps.get_family`
+  **rejects kid tokens outright** (covers all `/family/*`, `/home`,
+  savings-plan mgmt in one place); `get_family_currency` is the kid-OK
+  variant for the read-only `/catalog`. `require_parent` guards
+  `POST /kids`, `DELETE /kids/{id}`, `POST /kids/{id}/debt` (kids must
+  never add money), `POST/GET /kids/{id}/invite`. Kid-reachable:
+  portfolio, buy/sell/sell-all/quote, savings deposit/withdraw/overview,
+  `GET /kids/{id}/debt` (history), investment-transactions, catalog.
+- `PortfolioOut` now carries `boost_buffer_rate` (was a separate
+  `/family/settings` call the buy screen made — kids can't call that).
+- **Frontend sharing**: `useFamily()` (FamilyStore) gained `token` +
+  `basePath` (`/home` | `/kid`) + `isKid`. Parent `FamilyProvider` sets
+  them from NextAuth + `/home`; new **`KidFamilyProvider`**
+  (`lib/kid-family-store.tsx`) implements the same shape for one kid,
+  seeded from `/kid/me` (resolved server-side in the kid layout, passed
+  as a plain object) + `/kids/{id}/portfolio`. Every shared component
+  (`portfolio-client`, buy/sell/savings flows, history pages,
+  `lot-detail`) was switched from `useSession()` → `useFamily().token`,
+  and their per-kid hrefs go through **`useKidLinks(kidId)`**
+  (`{pagePrefix, portfolio, home}`) — because the kid app's "home" is
+  `/kid/kids/<id>` and its portfolio is `/kid/kids/<id>/portfolio`,
+  whereas the parent's portfolio IS `/home/kids/<id>`. Same components,
+  both apps.
+- **Kid routes** (`app/kid/`): `kids/[kidId]/` (the `[kidId]` param
+  carries the **public_id**, not the pk — kept as `[kidId]` only so the
+  parent-page re-exports' `params.kidId` access still works) has its own
+  auth-guard `layout.tsx` (per-kid cookie + awaited `/kid/me`, 401/403 →
+  `/kid/locked?revoked=1`, `identity.public_id !== url` → own kid);
+  `kids/[kidId]/page.tsx` = `KidHome`, `/portfolio` = `KidPortfolioScreen`,
+  the rest are 1-line re-exports of the parent pages. `/kid` (bare) =
+  `KidLanding`: 0 sessions → locked, else redirect to the `kid_last`
+  cookie's kid (or the first session) — **no picker** (each kid keeps
+  their own `/kid/kids/<handle>` link). `/kid/join/[token]` and
+  `/kid/locked` sit outside the guarded subtree.
+- **Kid session storage**: **per-public_id** httpOnly cookie
+  `kid_sess_<public_id>` (NOT one shared cookie — siblings on one device
+  / two browser tabs must not clobber each other; Chrome shares its
+  incognito cookie jar, so a single cookie name really does merge them).
+  Set by `app/kid/api/claim`, cleared by `.../signout` (needs
+  `{publicId}` in the body). Plus a non-httpOnly `kid_last` hint so bare
+  `/kid` skips straight to the right kid. In the kid app the frontend
+  uses `public_id` as the kid id *everywhere* (URLs, cache keys, API
+  paths — backend resolves it from the token); the real UUID never
+  leaves `/kid/me`.
+- **Parent UI**: Settings kid row → name + "Remove" on top, a prominent
+  full-width **"Link a device ›"** below → `AttachChildSheet` (generate
+  link + PIN; copy-link always + `navigator.share` when available; a
+  red **"Sign <name> out of all devices"** button when `sessions_active`).
+- **Parent freshness**: `FamilyProvider` now also **polls `/home` every
+  30s while the tab is visible** (paused when hidden) — so a parent
+  watching `/home` sees a kid's trade land without a manual refresh
+  (the client store otherwise only reconciled on nav / tab-refocus).
 
-### Known gaps / follow-ups (not bugs to fix now)
+Migrations `0014_kid_auth` (`kids.token_version`, `kid_invites`) +
+`0015_kid_public_id_multi_device` (`kids.public_id`, `kids.sessions_active`,
+`consumed_at`→`first_claimed_at`). Shared dev DB is on `0015`.
 
-1. **The home screen does not show savings.** A kid who moves $100
-   cash → savings shows $100 less cash on `/home` and the savings
-   appears nowhere there (only on their detail page: the "$X saved"
-   subline + Savings section). Fixing means adding `savings_value` to
-   `KidSummary` / `FamilyHome` + `get_family_home` + home rendering —
-   a real chunk with a UI decision (where on the kid card?). **This is
-   the #1 follow-up.**
-2. `POST .../savings/deposit` and `.../withdraw` re-fetch the full
-   deposit detail (incl. a 40-point chart series) after the mutation;
-   the frontend discards both responses. Minor wasted compute on a
-   rare action.
-3. Mixed-currency summation in `build_overview` / `savings_value` /
-   `plan_deposit_breakdown` if the scheduler hasn't cached an FX rate
-   for a deposit's currency — matches the existing `investing_service`
-   tolerance (it just uses the native amount). Real only right after a
-   family changes to a brand-new currency.
-4. `SavingsDepositSheet`'s pre-deposit "Locked until about <date>" uses
-   calendar-month math while the backend uses 30.4375-day math — off by
-   a day or two; copy says "about" and the detail page shows the
-   authoritative `matures_at`.
+**Local dev ports drifted this session** (Windows ghost-port bug on 8100
+— see Lessons learned): backend `8101`, frontend `3014`. `backend/.env`
+`CORS_ORIGINS` lists `3014` first (so `frontend_origin` = the claim-link
+host resolves to `:3014`); `frontend/.env.local` `BACKEND_URL` →
+`:8101`. Check `netstat`/`.env` for ground truth before trusting this.
 
-### Non-obvious things the next session needs to know
+**Non-obvious:**
+- `KidInvite` datetime columns MUST be `DateTime(timezone=True)` in the
+  model (not bare `Mapped[datetime]`) or asyncpg rejects the tz-aware
+  `expires_at` insert against the `timestamptz` column.
+- A multi-use link means a leaked link+PIN lets someone in for up to 24h
+  (and they keep the session after). Mitigation is the parent's "sign
+  out of all devices". Accepted for v1 (virtual money, low stakes).
+- The kid app still lives under the root `SessionProvider` (NextAuth) —
+  `useSession()` just returns null there; shared components no longer
+  read it. Don't re-introduce a `useSession()` call in a shared component.
+- The kid layout **awaits** `/kid/me` (unlike parent `home/layout.tsx`
+  which must not await `/home`) — it's one fast query every kid route
+  needs, and awaiting server-side is the only place a revoked-session
+  401 can be caught with its `ApiError` type intact (a server→client
+  promise rejection loses the type → generic error boundary).
+- PWA `manifest.ts` `start_url` is still `/home` (parent-first). A
+  dedicated kid Android app (worker-2's TWA) would point its own start
+  URL at `/kid`.
 
-- **`plan_deposit_breakdown` must aggregate per kid, not per deposit.**
-  It returns one row per kid (deposits summed). A kid with two deposits
-  in the same plan → one row. The `SavingsLeftoversSheet` and the
-  cash-out `ConfirmSheet` both key their lists by `d.kid_id`; per-deposit
-  rows caused a React "two children with the same key" error.
-- **`savings-kind-form.tsx` staged-state reset** uses the
-  adjust-state-during-render pattern (`if (sig !== lastSig) { setLastSig;
-  setOverride({}) }`) — this is React's documented approach; do not
-  "fix" it into a `useEffect` (trips this project's lint rule anyway).
-- **`investing_service` imports `savings_service`** (for `savings_value`
-  in `get_portfolio`). `savings_service` imports `debts_db_service` /
-  `fx_service` only — no cycle. Keep it that way.
-- **Ghost-port bug recurred repeatedly this session.** The worktree's
-  backend port drifted 8098 → 8099 → 8100 chasing unkillable stale
-  listeners (`netstat` shows two PIDs `LISTEN`ing on one port; one
-  serves old code). `frontend/.env.local` currently points at **8100**.
-  If backend routes 404 or serve stale shapes, check `netstat` /
-  `Get-NetTCPConnection` for a ghost before assuming a code bug, and
-  move to a fresh port + restart both servers.
+**Known gaps (not bugs):**
+1. Kid JWT has a fixed 365d expiry (no refresh) — a kid who doesn't open
+   the app for a year needs a fresh link. Accepted for v1.
+2. Per-kid `loading.tsx`/`error.tsx` not copied into the `/kid` tree
+   (falls back to nearest boundary).
+3. Kid-side sell/withdraw still uses native `confirm()` (consistent with
+   pre-existing kid-portfolio behavior).
+4. Bare `/kid` with 2+ sessions and no `kid_last` cookie picks the first
+   arbitrarily. Fine in practice — each kid uses their own
+   `/kid/kids/<handle>` link and `kid_last` is set on every home load.
 
-### Iteration log (condensed — 10 feedback rounds + a merge)
+### Instant UX (client-side store + optimistic writes)
 
-Split single screen → flexible/locked + presets → in-app confirm sheet
-→ per-plan cash-out (kind-level removed) → staged Save + post-save
-leftovers sheet → deposit-count marker on every plan + accurate copy →
-per-plan Cash-out button on off plans → hub Deactivated pill + redder
-"still growing" + scoped the save alert → React dup-key fix (breakdown
-per kid) → Deactivated pill shows with zero plans → **merge
-`origin/master` (Instant UX) + rework every savings write to be
-optimistic** (see the "Instant-UX adaptation" subsection above). Full
-detail is in git log for `savings-plans`.
+Motivated by: "when I deduct money, show it done and save in the
+background; Settings should just open while it thinks." Every `/home/*`
+page was previously a blocking Server Component `await`, and writes did
+`POST` then `router.refresh()` (2nd full round-trip).
 
-## Current state / handoff (2026-09-07, end of `finish-feature` on `worker-1`)
-
-**What this branch does:** removes the "every click freezes the UI" problem
-without waiting on the pending Render/Neon region move. Navigation between
-cached screens is now instant (a client-side `/home` store seeded once per
-session), and writes (add/deduct money, add/remove kid, currency change,
-sell, sell-all, buy) reflect immediately with background persistence +
-rollback-on-failure. Full rationale + file map in the "Instant UX" status
-section below; merge-with-stock-boost notes in the section just under this.
-
-**Key decisions:**
-- Hand-rolled client store + `useCachedResource` (no SWR/React-Query) —
-  the project keeps its runtime deps to next/react/next-auth.
-- The `/home` seed is a server-started promise read with `use()` inside
-  `FamilyProvider`'s own Suspense — NOT an `await` in the layout body
-  (that's the navigation-blocking trap; see Lessons learned).
-- Sell keeps its "Selling…" button (matches master's buy flow and its own
-  `SellControls` refactor) rather than the standalone optimistic-sell an
-  earlier draft had — sell is a deliberate action like buy.
-- `finish-feature` review pass fixed the real bugs it surfaced: cached
-  screens now refetch after `invalidateResource`/`clearResourceCache`
-  (they used to sit on a stuck skeleton after a write); `applyKidBalanceDelta`
-  moves `total_owed` too (the home total was left stale); currency change
-  now clears the resource cache (cached amounts were in the old currency);
-  a stale cached error no longer re-throws on remount before the retry
-  runs; `invalidateKid()` helper replaces the repeated 3-4 line invalidate
-  blocks.
-
-**Verified:** 101 backend tests pass; frontend `build` + `lint` + `tsc`
-clean; `npm run test:e2e` (5) pass; Playwright authed smoke against the
-synthetic test family confirms Home→Settings makes zero backend requests,
-optimistic deduct moves both the kid card and the family total, a forced
-500 rolls back + toasts, sell-all no longer strands a skeleton, buy /
-boost-settings / lot-detail / history screens all render with no console
-errors.
-
-**Versions:** frontend `0.8.0` (was 0.7.0 — minor: new client-data
-layer). Backend `prices_as_of` field is additive-only, no migration.
-
-**Next session / gotchas:**
-- Local dev: backend `.env` `CORS_ORIGINS` was widened to include
-  `http://localhost:3000` so the frontend can run there (the port Google
-  OAuth is registered for). Harmless; revert if you like.
-- `useCachedResource` re-renders every mounted hook on any cache write
-  (tiny pub/sub) — fine at this app's scale (≤3 hooks mounted), revisit
-  if a screen ever mounts many.
-- The 3 boost screens master added (`settings/investing`,
-  `settings/investing/boost`, `lots/[lotId]`) were converted to the same
-  client + `useCachedResource("family-settings")` pattern for consistent
-  instant nav.
-- Not yet done: push, merge to `master`, cut the next branch (gated on
-  user confirmation per project permissions).
-
-## Status as of 2026-09-07 — worker-1: instant-UX branch merged with master's stock-boost feature
-
-**`worker-1` now carries BOTH the instant-UX / client-store work (its own
-"Instant UX" section immediately below) AND `master`'s stock-boost feature
-(merged in from `origin/master`).** The two overlapped heavily —
-`investing_service.py`, `portfolio-client.tsx`, `sell-sheet.tsx`,
-`buy-form-client.tsx`, `settings-form.tsx`, the buy page, `types.ts` — 6
-files had literal conflict markers. Resolution notes:
-- The boost feature's new screens (`settings/investing/*`, `lots/[lotId]`)
-  were server components doing blocking `await api.get()`; converted to the
-  same client + `useCachedResource("family-settings")` / `useFamily()`
-  pattern as the rest, so navigation into them is instant too.
-- `master` rewrote the sell flow into `SellControls` (shared by `SellSheet`
-  + `lot-detail-client`); kept that structure and just swapped its
-  `router.refresh()` for the client-store reconcile
-  (`invalidateResource(...)` + `refreshHome()`) at each `onSold` callback.
-  The standalone optimistic-sell from the instant-UX branch was dropped —
-  sell is a deliberate action like buy, and both keep their "Selling…" /
-  "Buying…" button (matching `master`'s own design).
-- `buy-screen.tsx` (the instant-UX orchestrator) now also fetches
-  `/family/settings` via `useCachedResource` for `boost_buffer_rate` and
-  passes `master`'s `matchingHoldings` / `sellableHolding` / `boostBufferRate`
-  props to `BuyFormClient`.
-- `prices_as_of` (instant-UX backend addition) survived the auto-merge in
-  `compute_portfolio` + both schemas + `routes_kids`.
-- Verified after merge: `cd backend && pytest` (all pass), frontend
-  `build` + `lint` clean, Playwright smoke of the merged app.
-
-<details><summary>Original stock-boost merge wrap-up (from master, pre-merge)</summary>
-
-**The stock-boost feature (full detail in the "stock boost feature" status
-entry below — this is the finish-feature/merge wrap-up, not a re-description)
-is done, merged with `origin/master`, reviewed, and ready to merge to
-`master`.** Built entirely in `FamilyBank-worker-3` on branch
-`boosted-stocks-and-interest`; `master` had meanwhile diverged substantially
-(production-latency investigation, request-log retention, rate limiting,
-frontend loading/error boundaries, an Android TWA wrapper — none of it
-touching the boost feature's own files directly, but several of them
-touched the *same* functions this feature also rewrote).
-
-- **Merging in `origin/master` required real conflict resolution, not just
-  accepting a side.** Three files had literal conflict markers:
-  - `CLAUDE.md` — both branches had appended their own dated "Status as
-    of" section on top of the same shared history; resolved by keeping
-    both, newest first, and disambiguating the two identically-dated
-    "2026-09-06" headings (one for this feature, one for the pre-existing
-    request-logging/currency-history work) since master's own new content
-    made a bare date no longer unique.
-  - `backend/app/scheduler/jobs.py` — master had split the old
-    `_refresh_prices()` into `_fetch_prices()`/`_write_prices()` (a perf
-    fix, to avoid holding a DB connection open during the ~10s of external
-    HTTP calls) and added `RequestLog` cleanup; this branch's `PriceTick`
-    insert (needed for boost_service to have tick history to walk) had to
-    move into master's new `_write_prices()`, right after its `PriceCache`
-    upsert, rather than living in the now-deleted monolithic function.
-  - `backend/tests/test_investing_service.py` — two separate real
-    conflicts, not just noise: (1) master's
-    `test_buying_twice_averages_cost_and_sums_units` had a name and
-    docstring describing the *old* avg-cost blending behavior, but its
-    actual body already asserted the *new* per-lot behavior (two distinct
-    lots, two distinct lot_ids) — kept this branch's correctly-named
-    `test_buying_twice_creates_two_separate_lots` instead (same body,
-    honest name) alongside master's genuinely new, unrelated
-    `test_buy_rejects_cleanly_when_fx_rate_is_missing`. (2) master's
-    `test_since_purchase_pct_reflects_total_return_not_last_tick_change`
-    mutated `PriceCache` directly and cleared the price-context cache,
-    which was correct for the *old* avg-cost `since_purchase_pct` (still
-    computed from live `PriceCache`) but wrong for a lot, whose
-    `since_purchase_pct` this feature computes from `boost_service`
-    walking `price_ticks` instead (see `investing_service._lot_entry`) —
-    kept this branch's `_add_tick`-based version, the only one that
-    actually exercises the code path a lot-based holding uses.
-  - **`backend/app/services/investing_service.py` and
-    `backend/app/api/routes_investing.py` auto-merged with no conflict
-    markers, but the result was still broken** — worth internalizing:
-    a clean textual 3-way merge is not proof of a semantically correct
-    one when both branches rewrote the same functions for different
-    reasons (this branch: per-lot buy/sell; master: routing every price
-    read through `load_price_context()`/`ctx.prices.get()` instead of
-    live per-call queries, and replacing separate `get_kid`+`get_family`
-    dependencies with a combined `get_kid_and_family`). Running the test
-    suite immediately after the merge commit caught it: `routes_investing.sell_all`
-    still used the pre-merge `Depends(get_family)` pattern, but master's
-    side of the merge had dropped `get_family` from this file's imports
-    entirely (replaced by the combined dependency) — `NameError: name
-    'get_family' is not defined` at import time, which means the whole
-    app would have failed to even start. Fixed by switching `sell_all` to
-    the same `KidAndFamily`/`get_kid_and_family` pattern every other route
-    in this file already uses. **Lesson: after resolving a merge with any
-    auto-merged (marker-free) file that both branches touched
-    substantively, run the test suite before trusting the merge — don't
-    assume "no conflict markers" means "no conflict."**
-- **Verified after the merge, not just assumed clean:** all 101 backend
-  tests pass (`cd backend && pytest`, up from the 65 mentioned in an older
-  status entry below — most of the growth is this feature's own
-  `test_boost_service.py`/`test_boost_settings.py` plus expanded
-  `test_investing_service.py` coverage), `alembic upgrade head` applies
-  cleanly against the shared dev/test DB (already at `0011`, migration
-  chain `0009→0010→0011` intact now that the real `0010_request_logs.py`
-  replaced this branch's placeholder), and `npm run build`/`npm run lint`
-  are both clean.
-- Reviewed every backend file in the diff line-by-line plus the bulk of
-  the frontend components as part of this same pass (both the "senior dev
-  review" and "self code review" steps of this project's finish-feature
-  workflow, done together rather than as two separate passes) — found
-  exactly the one real bug above (the dangling `get_family` reference);
-  nothing else worth flagging turned up (no dead code, no debug leftovers,
-  no unused imports — grepped for all three across the full feature diff).
-- Backend bumped 1.5.0 → 1.6.0, frontend 0.6.0 → 0.7.0 (both minor: a real
-  new user-facing feature, not a patch-sized fix).
-- **Not yet done as of this entry**: push the branch, merge to `master`,
-  cut the next branch — gated on explicit user confirmation per this
-  project's permissions (destructive/shipping steps are never taken
-  autonomously here). If you're reading this and those still haven't
-  happened, that confirmation is the next thing blocking this feature
-  from reaching production.
-
-</details>
-
-## Status as of 2026-09-07
-
-**Instant UX: client-side data store + optimistic writes (frontend
-v0.7.0, backend `prices_as_of` field). The app no longer freezes on a
-slow backend — navigation between cached screens is instant and writes
-reflect immediately, independent of the still-pending server region
-move.** Motivated directly by the user: "even if the server takes time,
-why can't we degrade the experience — when I deduct money I already have
-all the data, show it done and save in the background; and Settings
-should just open while it thinks." Both were true problems in how the
-frontend was built:
-
-- **Every `/home/*` page was a Server Component doing a blocking
-  `await api.get(...)` with `cache: "no-store"`.** Navigating to Settings
-  waited for the Next server to round-trip the backend (→ Neon) before
-  sending any HTML. Nothing was cached client-side, so Home → Settings
-  re-fetched `kids` + `base_currency` the user had *just* loaded. And
-  `GET /family/settings` on the Settings page was **100% redundant** —
-  it only used `base_currency`, already in the `/home` response
-  (`onboarding_completed`, the only other field, is used solely by the
-  layout gate). Same redundant `/family/settings` call was also in the
-  kid-portfolio and buy pages.
-- **Writes did `await api.post(...)` then `router.refresh()`** — a
-  second full server round-trip — with the button stuck on
-  "Confirming…" the whole time before any number moved. `debt-sheet`
-  already computed the new balance locally and threw it away.
-
-What shipped (hand-rolled — no new runtime dependency; the project keeps
-to next/react/next-auth):
-
-- **`src/lib/family-store.tsx` — `FamilyProvider` / `useFamily()`.**
-  Holds the whole `/home` payload client-side for the session. Seeded
-  **once** from a server-started, un-awaited promise passed from
-  `home/layout.tsx` and read with React's `use()` inside the provider's
-  own `<Suspense>` (the officially documented "use within a Context
-  Provider" pattern —
-  `node_modules/next/dist/docs/.../guides/single-page-applications.md`).
-  The layout keeps the provider mounted across every in-segment
-  navigation, so it suspends exactly once; every navigation after reads
-  the store synchronously. Exposes `refreshHome()` (deduped background
-  reconcile) and inverse-patch optimistic mutators
+- **`src/lib/family-store.tsx`** (`FamilyProvider`/`useFamily()`): holds
+  the `/home` payload client-side for the session. **Seeded from a
+  server-started, un-awaited promise** (`home/layout.tsx` does
+  `api.get("/home", token)` with no `await`), read via React `use()`
+  inside the provider's **own** `<Suspense>` — NOT awaited in the layout
+  body (that reintroduces the navigation-blocking trap; see Lessons
+  learned). Exposes `refreshHome()` + inverse-patch optimistic mutators
   (`applyKidBalanceDelta`, `addKidOptimistic`, `removeKidOptimistic`,
-  `applyCurrencyOptimistic`) that each return a `rollback()` that
-  composes safely with other in-flight optimistic writes.
-- **`src/lib/use-cached-resource.ts`** — a tiny stale-while-revalidate
-  cache (module-level `Map` + pub/sub) for the per-kid detail data that
-  isn't in `/home` (portfolio, catalog, asset detail, debt/investment
-  history). Serves last value instantly + revalidates in the
-  background; `invalidateResource(keyOrPrefix)` after a write.
-  Catalog/asset TTL ~10 min (prices only move ~5x/day — see
-  `prices_as_of` below), portfolio ~15 s serve-stale-first.
-- **`src/components/ui/toast.tsx`** — `ToastProvider` / `useToast()`.
-  Optimistic writes close their sheet immediately, so a later failure
-  ("Couldn't update Maya's balance — it's been restored.") has no inline
-  spot; it surfaces as an auto-dismissing toast instead.
-- **Screens now instant from the store:** Home + Settings read
-  `useFamily()`, zero network on navigation (**Settings went from 2
-  backend calls to 0**). Kid portfolio / buy / history pages are Client
-  Components that render their header/name/cash **instantly** from the
-  `/home` kid summary and stream the detail in via `useCachedResource`
-  with section-level skeletons. All redundant `/family/settings` calls
-  deleted (currency comes from the store).
-- **Optimistic writes:** add/deduct money, add/remove kid, sell, and
-  currency change all apply locally + close immediately, POST in the
-  background, `refreshHome()` to reconcile, and toast + `rollback()` on
-  failure. Buy keeps its "Buying…" button (it has a real server quote
-  and is a deliberate action) but now invalidates the portfolio cache +
-  `refreshHome()` instead of `router.refresh()`, so arriving at the
-  portfolio screen is instant with fresh holdings streaming in.
-- **Auth guard moved fully into `home/layout.tsx`** (`await
-  requireSession()` in the body — it only reads/verifies the session
-  cookie, no network, sub-ms block) since the pages below are now
-  Client Components that can't call it themselves. The
-  onboarding-completed check + the `/home` seed stay in their own
-  `<Suspense>` boundaries (both are real backend calls — the
-  navigation-blocking trap). `public.spec.ts`'s unauthenticated-redirect
-  tests still pass.
-- **Backend: `prices_as_of` (nullable datetime) added to `/home` and
-  `/portfolio` responses** — the max `PriceCache.updated_at`, computed
-  in Python from the already-loaded `PriceContext.prices` (no extra
-  query; new `PriceContext.prices_as_of` property). It's the timestamp
-  the user correctly pointed out "should already be there" (the
-  scheduler stamps every price row the same time per ~5h refresh — see
-  `jobs.last_refresh_at`). Lets the client cache price-derived screens
-  with confidence. `/catalog` already exposed per-asset
-  `price_updated_at`.
-- **Verified for real:** 82 backend tests pass; frontend
-  `build`/`lint` clean; drove it with Playwright against a minted
-  NextAuth cookie + the synthetic test family (Maya/Noah seeded with a
-  balance + a QQQ holding) — confirmed Home→Settings makes **zero**
-  backend requests, deduct closes the sheet and moves the balance
-  instantly, a forced-500 deduct rolls back + toasts, optimistic
-  add/remove kid reconciles temp→real row, buy/currency-change/history
-  all work with no console errors, and bad-kid-id / bad-symbol still hit
-  the error boundary / not-found page.
-- **Known cosmetic artifact, not a bug:** React streaming leaves a
-  `display:none` duplicate of the resolved Suspense subtree in the DOM
-  briefly during hydration (so `getByText` in a test can transiently
-  match two copies, one hidden). Cleaned up once hydration completes;
-  the user never sees it. Scope Playwright locators to `visible=true`.
-- **Trade-offs accepted:** optimistic values can briefly snap back on a
-  server rejection (rare — mitigated by toast + reconcile); the client
-  cache can show data a few seconds stale until background revalidation
-  (fine — prices move every 5h, balances reconcile within one
-  `/home` refresh per write); the first hard load of any `/home/*` URL
-  still needs one `/home` round-trip to seed the store (same wait as
-  the old `loading.tsx`), every navigation after is instant.
+  `applyCurrencyOptimistic`), each returning a composable `rollback()`.
+- **`src/lib/use-cached-resource.ts`**: stale-while-revalidate cache for
+  per-kid detail (portfolio, catalog, history) not in `/home`.
+  `invalidateResource(keyOrPrefix)` after a write; `invalidateKid()`
+  helper drops the standard per-kid keys (extend it when adding a new
+  per-kid cache key, e.g. savings did).
+- **`src/components/ui/toast.tsx`**: surfaces optimistic-write failures
+  (sheet already closed by the time a failure could show inline).
+- Add/deduct, add/remove kid, sell, currency change: optimistic + close
+  immediately, POST in background, `refreshHome()` to reconcile, toast +
+  rollback on failure. Buy keeps its "Buying…" button (deliberate
+  action, real server quote) but invalidates cache instead of
+  `router.refresh()`.
+- Auth guard (`requireSession()`, cookie-only) moved into
+  `home/layout.tsx`'s body since pages below are now Client Components.
+- Backend: `prices_as_of` (nullable datetime, from `PriceContext`, no
+  extra query) added to `/home`+`/portfolio` responses so clients can
+  cache price-derived screens with confidence.
+- Also merged with `origin/master`'s stock-boost feature the same
+  session — see git log for the merge-conflict resolution notes if
+  touching `investing_service.py`/`routes_investing.py`/`SellControls`
+  around this period.
 
-**Production-slowness root cause found: it's per-query network latency
-to Neon, multiplied by however many queries an endpoint runs
-sequentially — not a missing index or a single bad query.** Started
-from the request_logs data the 2026-09-06 logging feature collects.
-Every query in production — including a trivial single-row
-primary-key lookup with an index (`SELECT ... FROM kids WHERE id = $1`)
-— has a floor of ~300-450ms, and this floor is nearly identical
-regardless of the query's actual complexity (a plain PK lookup and a
-multi-column INSERT cost about the same). That's the signature of
-network round-trip time dominating over query execution, not query
-cost — almost certainly Render's backend instance and the Neon project
-not being in the same region (confirmed by the user; not yet changed —
-see "Architecture review for scale" below, "Not yet done (2026-09-07)").
-Since every endpoint in this codebase issues its
-DB queries sequentially (each one `await`ed before the next starts),
-this floor multiplies directly: `/buy` (9 queries) cost ~2.7s in DB
-time alone, `/home` (4 queries) ~2-3.5s, matching exactly what users
-reported ("every click takes a few seconds").
+### Stock boost feature
 
-**Why this couldn't be fixed by parallelizing queries within a
-request, and what was done instead.** The obvious fix — run
-independent queries concurrently via `asyncio.gather` — turns out to
-be unsafe here: SQLAlchemy's `AsyncSession` is documented as not safe
-for concurrent use from multiple coroutines on one instance (one
-connection can only run one statement at a time). True parallelism
-would need each concurrent branch to open its *own* session/connection
-— but `tests/conftest.py`'s test-isolation strategy runs every test
-inside one outer transaction that's never committed
-(`join_transaction_mode="create_savepoint"`, rolled back at teardown —
-see its own docstring), so a second, independently-opened connection
-inside the same request literally cannot see a test's uncommitted
-fixture rows (Postgres transaction isolation). Opening extra
-connections for concurrency would have silently broken every test that
-seeds data and then hits an endpoint using it. Given that, the fix
-actually applied was **reducing the number of round-trips instead of
-parallelizing them**, which doesn't have this problem (still one
-connection, same session, just fewer separate `SELECT`s):
-- `investing_service.get_asset_detail` (backs `GET /catalog/{symbol}`)
-  was doing 3 of its own raw per-symbol queries (`session.get`
-  ×2 + `fx_service.convert`) instead of reusing
-  `load_price_context`'s shared, scheduler-refreshed, in-process cache
-  like every other read path in this module already does — a genuine
-  miss from the batching pass described in the module's own docstring.
-  Fixed to route through the cache like the rest; costs ~0 extra
-  queries on a warm cache instead of always 3.
-- `load_price_context` itself did 2 separate `SELECT *`s (catalog,
-  then price_cache) on a cache miss — now one `LEFT JOIN` (outer, since
-  a symbol can exist in the catalog with no price row yet). This runs
-  on every read endpoint's cold-cache path (TTL expiry or right after a
-  scheduler refresh clears it), so it's on the critical path of nearly
-  everything.
-- Net effect: fewer round-trips per request, but each remaining
-  round-trip still pays the same ~300-450ms floor — **this is a real
-  improvement, not a fix for the underlying cause.** The actual fix is
-  the region mismatch (see "Architecture review for scale" below,
-  "Not yet done (2026-09-07)"); no amount of query reduction inside one
-  request substitutes for that.
+Family-wide `boost_buffer_rate` (monthly %, `families.boost_buffer_rate`)
+that only ever *adds* to a stock's return on an up-tick — real downside
+untouched. `price_ticks` (append-only, one row/symbol/scheduler refresh)
+makes reconstructing a stock's path since purchase possible.
+`investment_lots` replaced avg-cost `investment_holdings` for all new
+buys (unifies boosted/unboosted under one per-lot model); two purchases
+of the same symbol are separate, independently-sellable lots. Legacy
+`investment_holdings` rows still sell via the old code path
+(`investing_service.sell()` dispatches on `lot_id` vs `symbol`).
 
-**Follow-up, same day: traced two specific screens (Settings, the
-Add/Deduct sheet) query-by-query at the user's request, because "1-5
-queries taking multiple seconds" didn't sound reasonable on its own —
-correctly, it doesn't fully add up, and tracing it exactly surfaced
-both a real remaining bug and a real gap in what the logging can prove.**
-- `GET /family/settings` issues exactly **one** query (`get_family`'s
-  `db.get(Family, id)` — the route body itself does nothing else). Yet
-  production logs showed this same request taking up to 1842ms total
-  while `db_time_ms` was only ~426ms — over 1400ms unaccounted for by
-  the only query that ran. `request_logging.py`'s own comment already
-  named the candidates: "Python processing, external calls, or waiting
-  for a connection to free up." There's no external call and trivial
-  Python here, which points squarely at **connection acquisition** —
-  either waiting for a pooled connection to free up, or paying a brand
-  new physical connection's full TCP+TLS+Postgres-auth handshake (see
-  the `"db: established a new physical connection"` log lines, which
-  fire more often than "once at startup" in the captured window) —
-  and that cost is invisible to `db_time_ms`, which only wraps
-  `before_cursor_execute`→`after_cursor_execute` (i.e., starts timing
-  *after* a connection is already in hand).
-- `POST /kids/{id}/debt` (the Add/Deduct sheet) issues exactly **5**:
-  `get_kid` (tenant-scoped Kid lookup — necessary), `get_family`
-  (needed for `family.base_currency` in the response — Kid has no
-  currency of its own, so this isn't avoidable without denormalizing
-  currency onto Kid, which has its own well-documented trap — see
-  "Lessons learned"), `get_balance` for `balance_before`, the
-  `INSERT` itself, and — this was the actual bug —**a second, fully
-  redundant `get_balance` call for `new_balance`**, re-running the same
-  `SUM(...)` over the kid's whole ledger a second time when the route
-  already knows exactly what it just inserted. Fixed: `new_balance` is
-  now computed as `balance_before ± body.amount` in Python
-  (`routes_debt.py`) instead of re-querying — cuts this endpoint from 5
-  queries to 4, specifically removing one of the two ~1.1s `SUM`
-  aggregates seen in production. Also strictly more correct, not just
-  faster: the old code's second `SUM` could reflect an unrelated write
-  landing between the commit and that query, silently mislabeling the
-  response's "new balance" with a number this request didn't actually
-  produce.
-- **The user then pushed on `get_kid` + `get_family` specifically: two
-  separate point-lookups per request, when the route already knows
-  both ids and both are simple, related rows — asked directly why this
-  couldn't be one query.** It could, and now is:
-  `app/api/deps.get_kid_and_family` (new) replaces the pair with a
-  single `SELECT ... FROM kids JOIN families ...` — one round-trip
-  instead of two, same tenant-isolation check as `get_kid` (still
-  explicit, not just implied by the JOIN condition — a kid_id from
-  another family still 404s;
-  `tests/test_api_family_isolation.py` still passes unchanged).
-  Swapped in everywhere both were used together: `routes_debt.py` (both
-  routes) and `routes_investing.py` (`get_portfolio`, `quote_purchase`,
-  `buy`, `sell`) — **`POST /kids/{id}/debt` is now 3 queries, down from
-  the original 5**; `/buy` and the others each drop one query too.
-  `get_kid`/`get_family` on their own are unchanged and still used
-  where a route only needs one (e.g. `list_investment_transactions`
-  only needs the kid).
-- **Turned the connection-acquisition hypothesis into something the
-  next round of production logs can actually prove, instead of leaving
-  it as a guess.** Added `time_to_first_query_ms` to the structured
-  stdout log line (`app/core/query_timing.py` +
-  `app/core/request_logging.py`, stdout-only like `db_query_count`/
-  `db_time_ms` — not persisted) — the elapsed time from request start
-  to the *first* query's `before_cursor_execute`, which is exactly
-  where a pool checkout or a fresh connection's handshake would show
-  up and nowhere else currently does. On `GET /family/settings`, a
-  large `time_to_first_query_ms` relative to `db_time_ms` (e.g. the
-  1400ms/426ms case above) would confirm the connection-acquisition
-  theory directly; a small one would mean the gap is something else and
-  this theory is wrong. **Next session: once this is live, check that
-  field on a few of the slowest single-query requests before assuming
-  anything further about the cause.**
-- Two remaining necessary-but-real costs, left as-is because they're
-  inherent to the design, not bugs: (1) `get_kid`+`get_family` are two
-  separate point-lookups per request that touch anything kid-scoped —
-  this is the tenant-isolation enforcement point
-  (`app/api/deps.py`, and the property `test_api_family_isolation.py`
-  guards), not something to collapse away; (2) `get_balance` is a full
-  `SUM` over a kid's ledger rather than a stored running total, by
-  deliberate design (CLAUDE.md's "Architecture quick-reference": "never
-  stored redundantly" — buy/sell writes stay consistent with the ledger
-  specifically *because* nothing caches a derived balance). Both are
-  small, single-purpose queries; at this app's data volumes neither
-  should be inherently slow — if `time_to_first_query_ms` rules out
-  connection overhead, `get_balance`'s `SUM` cost specifically (not
-  just its round-trip) would be the next thing worth measuring for real
-  row counts on the actual production kid, not guessed at.
+- `boost_service.py` is **stateless** — a lot's whole trajectory is
+  recomputed on every read by walking `price_ticks` from `purchased_at`.
+  Only viable at this app's scale (a family has a couple dozen open lots
+  max); don't copy this pattern with real per-user volume.
+- Rate can only change while **every** kid holds zero stock
+  (`investing_service.has_open_positions`, enforced in
+  `PATCH /family/settings/boost-buffer-rate`) — OR via
+  `POST /family/settings/boost-buffer-rate/sell-and-rebuy`
+  (`apply_boost_rate_change_with_rebuy`): snapshots every position,
+  sells everything, changes the rate, rebuys — one outer commit makes it
+  atomic.
+- Settings UI: hub (`/home/settings/investing`) → sub-page
+  (`/home/settings/investing/boost`, `boost-settings-form.tsx`) with
+  toggle, rate stepper, worked example. Lot detail/sell/chart:
+  `/home/kids/[kidId]/lots/[lotId]` (`lot-chart.tsx`, plain inline SVG).
+  A closed lot (units=0 after full sell) shows its captured sale
+  value/price, not a recomputed $0.
+- Portfolio-wide "Sell everything" (`POST /kids/{id}/sell-all`) is the
+  only sell action with a native `confirm()` (rest use in-app sheets).
+- Deferred by explicit user request: "interest from parent" (flat
+  monthly rate on cash, competing with the boost) — not built.
 
-**`request_logs` now has actual retention** (backend v1.5.0) — nothing
-previously deleted from this table; at real traffic it would grow
-forever, costing Neon storage and eventually slowing down the very
-diagnostic queries it exists to enable.
-`app/scheduler/jobs.cleanup_old_request_logs` prunes rows older than
-`settings.request_log_retention_days` (default 30), piggybacked onto
-the existing price/FX refresh cadence (`run_refresh`) rather than
-needing its own schedule — a plain `DELETE` against the already-indexed
-`created_at` column is cheap enough not to warrant one.
+### Production performance investigation
 
-**`POST /internal/client-metrics` is now rate-limited per IP**
-(`app/core/rate_limit.py`, 30 req/60s, in-memory) — this was the one
-endpoint with no auth requirement and no shared secret (CLAUDE.md had
-flagged it as a known gap), genuinely reachable by anyone; a flood
-would grow `request_logs` and cost real Neon compute for nothing. Over
-the limit, the endpoint still returns 200 (this is best-effort
-telemetry — the frontend beacon fires-and-forgets and never checks the
-response) but silently drops the entry instead of logging it. Comes
-with the same module-level-cache test-isolation trap the price-context
-cache already had (see "Lessons learned") — httpx's `ASGITransport`
-gives every test request the same fake client address by default, so
-`clear_rate_limit_state()` had to be added to `db_session`'s
-setup/teardown alongside `clear_price_context_cache()`, or one test
-hitting the limit would silently poison every later test's ability to
-call this endpoint. **Requires `render.yaml`'s `startCommand` to pass
-`--proxy-headers`** (added) — without it, `request.client.host` always
-sees Render's own edge proxy, not the real visitor, since Render
-always sits in front; safe to trust here specifically because Render's
-proxy is the only thing that can open a direct connection to this
-process. In-memory and per-process — if this backend ever runs as more
-than one instance, each enforces the cap independently rather than
-sharing one global count; revisit with a shared store (Redis) if that
-ever becomes the deployment shape.
+Root cause: **per-query network latency to Neon (~300-450ms floor per
+query, roughly constant regardless of query complexity), multiplied by
+however many queries an endpoint runs sequentially** — points at
+Render/Neon region mismatch (confirmed by user, **not yet fixed** — needs
+a dashboard region decision, not a code change). Can't fix by
+`asyncio.gather`-ing queries within a request: `AsyncSession` isn't safe
+for concurrent use, and opening a second connection mid-request would
+break test isolation (`tests/conftest.py`'s uncommitted-outer-transaction
+strategy). Fix applied instead: fewer round-trips, not parallel ones —
+`app/api/deps.get_kid_and_family` (one JOIN replacing two point-lookups,
+swapped in everywhere both were needed), `load_price_context` now one
+`LEFT JOIN` instead of two `SELECT`s, `POST /kids/{id}/debt` no longer
+re-queries balance after insert (computes `balance_before ± amount` in
+Python — also fixes a race-condition mislabeling bug the old re-query
+had). Added `time_to_first_query_ms` (stdout-only, not persisted) to
+confirm/rule out connection-acquisition overhead vs. query cost — check
+it on slow single-query requests before assuming further causes.
+`request_logs` now has retention (30d default, piggybacked on the
+scheduler refresh). `/internal/client-metrics` is rate-limited (30/60s
+per IP, in-memory — needs `--proxy-headers` in `render.yaml` to see real
+client IPs behind Render's proxy) since it has no auth/shared secret by
+design. Frontend: `loading.tsx`/`error.tsx` added to every `/home` and
+`/onboarding` route segment; `home/layout.tsx`'s onboarding check moved
+into a Suspense-wrapped `OnboardingGate` (a layout doing a blocking fetch
+in its body blocks every route below it — see Lessons learned).
 
-**Frontend: every navigation under `/home/*` now shows instantly, with
-a real loading state or a friendly error screen, instead of freezing
-with no feedback (frontend v0.6.0).** Motivated by a real observation:
-if the backend is slow (see above) or unreachable, a parent tapping
-Settings saw nothing happen at all — no URL change, no spinner, no
-error — until the request either resolved or hung. Root cause: **zero
-`loading.tsx`/`error.tsx` files existed anywhere in the app**, and
-every page was a Server Component doing a blocking `await api.get(...)`
-with `cache: "no-store"`, so a slow/dead backend blocked the entire
-route transition.
-- Added a `loading.tsx` (lightweight skeleton, `components/ui/skeleton.tsx`)
-  to every route segment under `/home` and `/onboarding`, and an
-  `error.tsx` (`components/ui/error-state.tsx` — "Something went
-  wrong" + Try again/Back to home) at `/home`, `/onboarding`, and the
-  root, so a thrown `ApiError` (backend down, 5xx, or an uncaught 404
-  like a since-deleted kid_id) renders a real screen instead of a crash.
-- **The harder part, and the one that actually makes any of the above
-  take effect: `home/layout.tsx` had to be restructured.** It did its
-  own blocking fetch (`/family/settings`, to redirect to `/onboarding`
-  if incomplete) directly in the layout body. Per this exact Next.js
-  version's own docs
-  (`node_modules/next/dist/docs/.../file-conventions/layout.md`,
-  "Interaction with loading.js" — **read this before touching
-  layout/page fetch patterns again; this project's `AGENTS.md` warns
-  this Next.js version's conventions can differ from training data,
-  and this is a concrete example of that**): a layout that does an
-  uncached fetch **blocks navigation for every route beneath it**, and
-  none of that segment's `loading.tsx` files can ever show for it —
-  `loading.tsx` only wraps `page.js` and nested layouts, never the
-  segment's own `layout.js`. Fixed by extracting the fetch+redirect
-  into a small `OnboardingGate` async component, Suspense-wrapped
-  (`fallback={null}`) inside `HomeLayout`, with `{children}` rendered
-  as a sibling outside that boundary — exactly the pattern the docs
-  show for this. **Trade-off accepted deliberately:** a user who lands
-  on a `/home/*` URL before completing onboarding could now see a brief
-  flash of real page content before the redirect fires, instead of
-  never seeing it — not a security issue (the backend still enforces
-  real authorization on every call regardless of what this gate does),
-  just a rare, cosmetic edge case traded for instant navigation on
-  every normal request.
-- Verified for real (not just build+lint): minted a valid NextAuth
-  session cookie directly (via `@auth/core/jwt`'s `encode()`, the same
-  `AUTH_SECRET` from `.env.local`, salt = the cookie name) against the
-  synthetic test family from CLAUDE.md's dev/test-DB section, drove it
-  with Playwright — normal navigation to `/home`/`/home/settings`
-  renders real data with zero console errors, and navigating to a
-  well-formed but nonexistent kid_id (a stand-in for "the backend
-  failed" — same code path, `api.get` throwing an uncaught `ApiError`)
-  correctly rendered the new error screen with a working Try again
-  button instead of a blank/crashed page. Didn't literally kill the
-  local backend process for this — see "Lessons learned" for why.
+Scale review findings not yet acted on: single Render instance/uvicorn
+process (fine at current traffic); in-process scheduler assumes exactly
+one instance (needs leader election or the external-cron model before
+adding a 2nd instance); connection pool unconfigured (SQLAlchemy default
+5+10); free tiers (Render+Neon) aren't built for real scale regardless of
+code — needs a paid-tier decision from the user, not flagged as urgent.
 
-**A real, pre-existing pytest bug found and fixed while adding the
-`request_logs` cleanup test: `app.core.db.engine`'s connection pool is
-not event-loop-aware, and pytest-asyncio gives every test function its
-own event loop.** `app/core/db.py`'s module-level `SessionLocal`/`engine`
-is a process-wide singleton (by design — it's the real engine used
-outside of tests too). asyncpg connections are tied to the event loop
-that created them; when a test pools a connection via a direct
-`SessionLocal()` call (the pattern `tests/test_scheduler.py` already
-used for `last_refresh_at`), that connection can get checked back out
-to a *later* test's different loop and immediately blow up with
-`RuntimeError: Event loop is closed` on first use — not a bug in
-whichever test happens to draw it. Only `test_scheduler.py` touches
-`SessionLocal` directly among test files, so it was invisible until a
-second test in that file did the same thing (the new
-`test_cleanup_old_request_logs_...` test). Fixed with an autouse
-fixture scoped to that one file that disposes `engine`'s pool before
-and after each test — see its docstring in `tests/test_scheduler.py`
-if you add a test elsewhere that touches `SessionLocal`/`engine`
-directly; the same trap applies there too.
+### Deployed
 
-**Architecture review for scale (thousands-tens of thousands of
-users), requested directly — findings, and what's still open:**
-- **Not yet done (2026-09-07) — region mismatch, the real fix for the
-  slowness above:** the user confirmed Render and Neon are not in the
-  same region; not yet changed (needs a dashboard decision — pick a
-  Render region and/or a Neon project region that are actually close,
-  possibly requiring a new service/project — not a code change). No
-  amount of query-count reduction fully substitutes for this.
-- **Single Render instance, single uvicorn process, no `--workers`.**
-  Fine for today's traffic (this app is I/O-bound — one async event
-  loop handles a lot of concurrent waiting-on-Neon requests) but it's a
-  single point of failure with no redundancy, and any CPU-bound stretch
-  (JWT verification, Pydantic validation, JSON serialization) serializes
-  across every concurrent request in that one process. Revisit if/when
-  traffic actually grows enough to matter — not done preemptively here.
-- **The in-process scheduler (`app/scheduler/loop.py`) assumes exactly
-  one long-running instance.** If this backend ever runs as more than
-  one Render instance, each would run its own copy of the refresh loop
-  independently — redundant Yahoo/FX API calls per instance, and no
-  coordination writing the same `price_cache`/`fx_rates_cache` rows
-  (upserts, so not *unsafe*, just wasteful and racy about which
-  instance's data "wins"). Needs a real fix (leader election, or move
-  to the external-cron `/internal/refresh` model the code already
-  supports for serverless) before adding a second instance — don't add
-  one without addressing this first.
-- **Connection ceiling**: this process's pool is unconfigured
-  (`pool_size`/`max_overflow` left at SQLAlchemy's defaults, 5+10=15),
-  plus the request-logging middleware and the scheduler each open their
-  own separate connections via `SessionLocal` outside the request pool.
-  Fine for one instance at today's scale; Neon's free tier has its own
-  connection ceiling that a second instance (or raising `pool_size`)
-  could approach — check Neon's dashboard limits before scaling either
-  dimension.
-- **`request_logs` retention** — done this session (see above).
-- **`/internal/client-metrics` abuse resistance** — done this session
-  (rate limit, see above); still no auth/shared secret by design (a
-  metric from a signed-out screen is still worth logging), so the rate
-  limit is the only defense, not a full fix.
-- **The free tiers themselves (Render + Neon) are not built for
-  "thousands of users" regardless of any code-level fix** — cold
-  starts, shared/throttled CPU, and hard connection/storage ceilings
-  are platform limits, not something this codebase can optimize past.
-  Getting to real scale needs a paid-tier decision from the user
-  (cost), not more code changes — flagged, not resolved here.
-- Did **not** find further N+1 query patterns beyond the two fixed
-  above in this pass (checked `/home`, `/catalog`, `/catalog/{symbol}`,
-  `/kids/{id}/portfolio`, `/kids/{id}/quote`, `/kids/{id}/buy`,
-  `/kids/{id}/debt`) — the remaining per-endpoint query counts are
-  already about as low as they can be within one session/connection.
+- Frontend: https://family-bank-nine.vercel.app (Vercel, root dir
+  `frontend`, auto-deploys from `master`).
+- Backend: https://familybank-backend.onrender.com (Render, `render.yaml`
+  at repo root, auto-deploys from `master`).
+- **`master` is the deploy branch for both** — a `worker-N` branch isn't
+  live until merged. Env vars live in each platform's dashboard, not the
+  repo — add new required vars in both the dashboard and local `.env`.
+- Render free tier sleeps after 15 min idle (30-50s cold start) — not a
+  bug if something's slow after a break.
+- `TODO.txt` at repo root is the user's own untracked feature-idea
+  scratch list — not part of the build, don't rely on it being there.
 
-## Status as of 2026-09-06 — stock boost feature
+## Architecture quick-reference
 
-**Stock "boost" feature — backend built and tested, settings UI built and
-manually verified; kid-facing portfolio UI NOT yet wired up (see gap
-below).** Born from a user request to make small stock positions feel
-less boring, without literal leverage (rejected — too much real downside)
-or a cosmetic-only multiplier (rejected — doesn't compete economically
-with the separately-planned "interest from parent" idea, deferred this
-round). Landed design: a family-wide `boost_buffer_rate` (monthly %,
-`families.boost_buffer_rate`) that only ever *adds* to a stock's return
-on a tick where the real price rose — never on a down-tick, so real
-daily volatility/downside is untouched, only the long-run expected value
-is tilted up.
-
-- **New `price_ticks` table** (`app/models/catalog.py`): append-only,
-  one row per symbol per scheduler refresh, written alongside the
-  existing overwrite-only `PriceCache` in `scheduler/jobs.py`. This is
-  what makes the boost math possible at all — `PriceCache` only ever
-  has "now", so there was previously no way to reconstruct a stock's
-  path since a specific purchase moment.
-- **New `investment_lots` table** — every stock purchase now creates its
-  own permanent, independent lot (`investing_service.buy()` no longer
-  writes to the old `investment_holdings` avg-cost table at all,
-  boosted or not — this was a deliberate scope decision made with the
-  user: unify on one model rather than keep two, since a lot's fixed
-  purchase timestamp is what makes a real "since purchase" graph
-  possible for every holding, not just boosted ones). Two purchases of
-  the same symbol are never blended — they show up as two separate
-  entries, sellable independently (partial sells reduce a lot's units;
-  selling to zero closes it). Old `investment_holdings` rows from before
-  this shipped are untouched and still sellable via the legacy code path
-  in `investing_service.sell()` (dispatches on `lot_id` vs `symbol`).
-- **`boost_service.py`'s `_walk`/`compute_lot_series`/`compute_lot_value`
-  — deliberately stateless.** No persisted checkpoint or accrued-factor
-  column anywhere: a lot's whole synthetic trajectory (and thus its
-  current value *and* its since-purchase graph — same function, one
-  returns the last point, the other the whole series) is recomputed from
-  scratch on every read, by walking `price_ticks` from the lot's
-  `purchased_at`. This was a real back-and-forth with the user — the
-  first design tracked a separately-maintained "boost factor" applied to
-  the live current price, which turned out to be the wrong shape (it
-  couldn't produce one coherent "real value including the boost
-  throughout the whole period," and needed a write-on-read checkpoint,
-  which is exactly the FastAPI-autobegin trap in "Lessons learned"
-  below). Full recompute is only viable because of the scale this app
-  runs at (a family has at most a couple dozen open lots; a symbol
-  accrues a few thousand ticks/year) — don't copy this pattern
-  somewhere with real per-user volume without reconsidering it.
-- **The rate is family-wide, not per-kid or per-symbol**, and can only be
-  set/changed while *every* kid in the family holds zero stock at all
-  (legacy holdings or open lots — `investing_service.has_open_positions`,
-  enforced in the new `PATCH /family/settings/boost-buffer-rate`). This
-  guarantees every lot open at any moment shares exactly one rate — no
-  mid-holding rate change to reason about. The user wants this
-  auto-sell-then-rebuy-at-the-new-rate eventually; for now the parent
-  has to sell everything by hand first.
-- **The per-tick bonus is prorated by real elapsed wall-clock time**
-  (`HOURS_PER_MONTH = 730.5`), not a fixed assumed tick count — the
-  scheduler's tick spacing is irregular (a relative sleep loop that
-  stops entirely while the backend process is idle, see
-  `scheduler/loop.py`), so a fixed "%/tick" would over- or under-shoot
-  depending on how often the process happened to be awake.
-- **Settings UI — two-tier structure, iterated live against direct user
-  copy feedback (treat as production-bound text, not placeholder).**
-  `/home/settings/investing` is a hub page (currently just one card) —
-  a short marketing-style pitch for "Stock boost" plus a button to
-  `/home/settings/investing/boost`, which holds the actual controls
-  (`boost-settings-form.tsx`): toggle, a 0.1%-stepped rate input (short
-  recommendation line, default 3.0%), two short plain-language
-  paragraphs on what the boost does, and a worked dollar example ("$50
-  into the S&P... about $51 without a boost, about $52.50 with one").
-  This hub/sub-page split is deliberate groundwork for the deferred
-  interest feature to slot in as a second card later — see spec at the
-  top of `investing/page.tsx`. Linked from a "Advanced investing &
-  savings settings" row on the main Settings page, no subtitle (an
-  earlier version named the not-yet-built interest feature there, which
-  the user asked to remove since it isn't real yet).
-  **A real copy correction worth remembering**: an earlier draft framed
-  the boost as "not coming from the market, coming from you" as if
-  market gains were somehow different — the user caught that this
-  contradicts the app's own core framing (spec section 0): *everything*
-  here is virtual, so a "real" market gain is exactly as much "from the
-  parent" as a boosted one is. Reframed to avoid that false contrast
-  entirely — the example now just calls the extra "your treat on top,"
-  warmly, not a solemn warning about who's really paying. If writing
-  parent-facing copy about any gain/cost in this app, re-check it
-  against that same framing before shipping it.
-  Manually verified against a live dev server with Playwright
-  (screenshots + a real save/reload round-trip against the DB, and the
-  hub→boost-page click-through) — see "Lessons learned" below for how
-  the auth was faked for that, since it's a reusable trick.
-- **Fixed same-day, and worth flagging exactly how it was missed:**
-  `SellSheet` and the buy/sell screens still sent the old `{symbol,
-  units}` shape after `buy()` was rewired to lots — since a symbol can
-  now match more than one lot, this wasn't just "the UI looks slightly
-  off," it was a hard functional break: selling *any* stock bought after
-  this shipped failed outright (no legacy `InvestmentHolding` row for it
-  to find), and two purchases of the same symbol were indistinguishable
-  in the UI (both linked to one page that could only ever act on
-  whichever one happened to match first). Fixed by threading `lot_id`
-  through: `portfolio-client.tsx`'s per-row link now carries
-  `?lot=<lot_id>`; `buy/[symbol]/page.tsx` resolves the specific
-  clicked holding from that instead of a bare `.find(h => h.symbol ===
-  symbol)`; `SellSheet` sends `lot_id` when present, `symbol` only for
-  a genuine pre-feature legacy holding. Verified for real with
-  Playwright against a live dev server: bought the same symbol twice,
-  confirmed two distinct rows/URLs, sold one, confirmed via the API
-  that only that exact lot closed and the other was untouched.
-  **Why the backend test suite passing didn't catch this**: the API
-  test that exercises buy→sell was itself updated, as part of the same
-  change, to send the new `lot_id` shape — which proves the backend
-  handles a well-formed request correctly, but says nothing about
-  whether the actual frontend still constructs one. A backend-only
-  "tests pass" claim after changing a request/response contract that
-  existing frontend code depends on is not the same as verifying that
-  frontend code — the fix is to actually click through any *existing*
-  screen whose backend contract changed, not just a screen whose files
-  you touched directly.
-- **Per-lot graph screen — built, then became the canonical "view/sell an
-  owned lot" screen after user feedback.** `/home/kids/[kidId]/lots/[lotId]`
-  (`lot-chart.tsx` — a plain inline SVG polyline, deliberately not a
-  charting library for one simple line) renders the exact same `series`
-  `boost_service.compute_lot_series` produces, so the chart and the
-  headline number can never disagree.
-  First version linked it from a "Chart" link inside the *Buy* screen's
-  "you own this" banner — the user then pointed out (with a screenshot)
-  that a screen titled "Buy AMZN" showing a buy form was wrong for
-  viewing an *already-owned* position, and that its sparkline was the
-  generic asset-level one, not a since-purchase graph. Root cause:
-  `portfolio-client.tsx`'s "My Investments" rows still linked every
-  holding to the Buy screen. **Fixed by routing differently based on
-  what a holding actually is**: a lot (`lot_id` present) now links
-  straight to `/lots/[lotId]` — no buy form ever shown, and the correct
-  purchase-scoped chart, both automatically, since that page never had
-  a buy form or generic sparkline to begin with. Only a pre-lot legacy
-  avg-cost holding (no `lot_id`, can't have its own detail page) still
-  goes to the Buy screen's banner. Sell itself was also moved onto the
-  lot page directly — `SellSheet` is now opened from `lot-detail-client.tsx`
-  instead of round-tripping through `/buy/[symbol]?lot=...`, which stays
-  reachable but is no longer how a real user gets there.
-  Also added, from the same feedback: a tap-to-reveal explanation on the
-  "Boosted X%/mo" badge (kept to just this page, not the list rows,
-  since nesting a button inside `portfolio-client.tsx`'s `<Link>` risks
-  both an a11y issue and swallowed/ambiguous click handling — a static
-  badge there is the safer trade-off).
-  **A real bug found via testing this, not requested but worth fixing
-  immediately since it shipped in the same change**: a fully-sold lot's
-  `units` drops to 0 (see `_sell_lot`), so `current_value * units` on
-  the detail page rendered a misleading "$0.00" for anything sold in
-  full. Fixed two-sided: `boost_service.compute_lot_series` gained an
-  `until` parameter so a closed lot's history is capped at `sold_at`
-  instead of continuing to "move" from ticks that landed after the kid
-  no longer held it, and `get_lot_detail` now returns the already-
-  captured `sale_value`/`sold_at` for a closed lot rather than trying
-  to recompute a value from (now correctly near-empty) post-sale
-  history. The frontend shows a closed lot's per-unit sale price
-  instead of a total, since the original unit count is gone once units
-  hits 0.
-  Verified with synthetic `PriceTick` rows inserted directly (real
-  ticks take hours to accumulate), including one deliberately dated
-  *after* a full sell, to confirm the closed lot's number and chart
-  both ignored it.
-  **One more round of feedback on the same screenshot**: the sell UI
-  itself was a "Sell this" button opening a `SellSheet` popup — asked to
-  drop the popup entirely in favor of a direct "Sell all" action plus
-  the picker (units stepper, proceeds, confirm) shown inline on the page
-  at all times. Extracted the picker into a new `sell-controls.tsx`
-  (shared by both the inline lot page and the still-popup-based
-  `SellSheet` used on the Buy screen for legacy holdings) so the same
-  math/API-call logic isn't duplicated — `SellSheet` is now just
-  `BottomSheet` + `SellControls`. The picker's own internal shortcut was
-  relabeled "Max" (was "Sell all") to avoid two same-labeled controls on
-  one screen now that a real "Sell all" button exists above it.
-  **Then simplified further, and re-colored**: the standalone "Sell all"
-  button was actually dropped again — merged into the picker's own
-  confirm button instead, which now reads "Sell all for $X" when the
-  stepper is at max units and "Sell for $X" otherwise, and switched from
-  `bg-emerald` (this app's buy/positive color) to `bg-negative`
-  (matches "Deduct"'s styling in `debt-sheet.tsx`) since a sell action
-  reading in green looked wrong to the user. This removed the whole
-  two-button/divider structure entirely — one control, correctly colored.
-  Also from the same feedback round: the hub page
-  (`/home/settings/investing`) now fetches `FamilySettings` and shows a
-  small "Active" pill on the Stock boost card when a rate is set, so a
-  parent can see status without a click; the boost page's toggle row was
-  relabeled "Boost active" (was "Boost stock gains" — reads as a state,
-  not an instruction); and a successful save now `router.push`es back to
-  `/home/settings` instead of leaving the parent stranded on the boost
-  page — chosen specifically to avoid adding any new UI element for
-  "how do I get back", per the user's ask to not overload this screen.
-- **One more pass on the boost page + two new features, from a fresh
-  round of screenshots.** The "Boost active" label was itself corrected
-  again to **"Stock boost active"** — don't re-shorten it. The
-  explanation/rate-picker/example were unconditionally hidden behind
-  `{enabled && ...}`; changed to always render regardless of the
-  toggle, since a parent should be able to read what this does and
-  preview a rate *before* deciding to turn it on. The back chevron
-  (`PageHeader`'s `backHref`) now skips the one-card hub and goes
-  straight to `/home/settings` — asked for "a faster way back," and
-  since the hub has nothing worth stopping at with only one card in it,
-  skipping it outright (not just after a save) was the actual fix, not
-  the router.push-on-save from the previous round alone.
-  **New: a portfolio-wide "Sell everything" button** on the kid's
-  My Investments tab (`portfolio-client.tsx`) — backed by a new
-  `investing_service.sell_all()` / `POST /kids/{id}/sell-all` that
-  closes every open lot and legacy holding for a kid in one call (reuses
-  `_sell_lot`/`sell()` per position, not a new sell code path). Has a
-  native `confirm()` — the only sell action in this feature with one,
-  since liquidating an entire portfolio in one tap is meaningfully more
-  consequential than any single-lot sell.
-  **New: the "Boosted X%/mo" tappable badge now also appears on the Buy
-  screen** (not just an owned lot's own pages) — extracted into shared
-  `ui/boosted-badge.tsx` (`BoostedBadge` + `BoostedExplanation`, both
-  now used by `lot-detail-client.tsx` and `buy-form-client.tsx`) so
-  buying a new stock shows upfront that it'll be boosted, using the
-  family's current `boost_buffer_rate` rather than a specific lot's
-  locked-in one (the purchase hasn't happened yet).
-- **Fourth feedback round — three UI fixes plus the sell-and-rebuy
-  feature that earlier notes flagged as a "future" possibility.**
-  (1) "Sell everything" now shows the amount (`Sell everything for
-  $X`, using `portfolio.holdings_value` — already the exact right
-  number, no new calculation needed).
-  (2) **The Buy screen no longer offers Sell at all**, even for a
-  symbol the kid already owns — browsing to buy and managing an
-  existing position are different intents, and conflating them was the
-  root cause of an earlier session's "Buy AMZN" screen showing a Sell
-  button. Now: `sellableHolding` in `buy/[symbol]/page.tsx` is only ever
-  non-null when `from === "holdings"` *and* the match is a legacy
-  avg-cost holding (no `lot_id`) — the sole remaining case this screen
-  sells directly, since a legacy holding has no dedicated page of its
-  own the way a lot does. Every other case (browsing to buy, or already
-  owning lots) shows a plain "You already own N units, worth $X" line
-  with no interactive element at all — no Sell, no Chart link.
-  (3) **Two real bugs found from one user report, both now fixed**: (a)
-  `SellControls`' unit stepper got stuck after a partial sell — the
-  component doesn't unmount across a `router.refresh()`, so its
-  `unitsStr` state kept the pre-sell value even though `holding.units`
-  (the prop) had shrunk, clamping both +/- buttons disabled. Fixed by
-  adjusting state during render when `holding.units` changes (React's
-  documented pattern for this — a `useEffect` calling `setState`
-  synchronously trips this project's lint rule and is the wrong tool
-  here regardless). (b) Selling from the lot detail page — full or
-  partial — now navigates to `/home/kids/{kidId}` afterward instead of
-  staying put; a sell's natural conclusion is returning to the
-  portfolio, not lingering on a now-stale single-lot page.
-  (4) **New: `investing_service.apply_boost_rate_change_with_rebuy` +
-  `POST /family/settings/boost-buffer-rate/sell-and-rebuy`** — the
-  "future" auto-migration mentioned in earlier status notes, now built.
-  Snapshots every kid's every position (symbol + units, lots and legacy
-  holdings alike) *before* selling anything, sells everything for every
-  kid, changes `family.boost_buffer_rate`, then rebuys each snapshotted
-  position at the new rate. No new commit inside the function — the
-  route's single outer commit is what makes the whole migration atomic
-  (any failure mid-way rolls every sell/buy/rate-change back together,
-  same mechanism already relied on elsewhere in this file). Surfaced on
-  the boost settings screen as a small red "⚠ Sell everything and rebuy
-  with the new boost" line that appears only after the normal save hits
-  the existing 409 guard — clicking it opens a `confirm()` spelling out
-  exactly what will happen (matches this app's existing convention for
-  consequential actions, e.g. `handleRemoveKid`) before calling the new
-  endpoint. Verified live end-to-end: rate changed family-wide, the same
-  symbol/unit count came back under a **new** lot id (proving it was
-  genuinely re-sold and re-bought, not just relabeled), and cash netted
-  back to the pre-sell amount since sell and rebuy happen at the same
-  price.
-- **Fifth feedback round, two more fixes.** (1) The lot detail page was
-  missing the asset's description text that the Buy screen already
-  shows (e.g. "Amazon started as an online bookstore...") — added
-  `description` to `LotDetailOut`/`get_lot_detail` (sourced from
-  `AssetCatalog.description`, same field the catalog/buy screens
-  already use) and rendered it on `lot-detail-client.tsx` in the same
-  spot the Buy screen uses. (2) The sell-and-rebuy confirmation used a
-  bare browser `confirm()` — replaced with a proper in-app sheet
-  (`sell-and-rebuy-sheet.tsx`, red/warning-toned, a numbered list of
-  exactly what will happen, `bg-tint-negative`/`text-negative` matching
-  this app's existing warning-color tokens rather than introducing a
-  new one) — `boost-settings-form.tsx` now opens this sheet instead of
-  calling `confirm()` directly, and only actually calls the endpoint
-  from the sheet's own confirm button.
-- **Sixth round: a copy pass on the boost settings page itself — flagged
-  by the user as still a draft, not finalized.** The hub card's short
-  teaser now also repeats right under the "Stock boost active" toggle.
-  Added a new opening paragraph stating the actual purpose (make gains
-  more visible/felt) plus a comparison to savings interest (recommend
-  setting the boost at least 1% above whatever savings rate is offered,
-  written to make sense even before the deferred interest feature
-  exists). Replaced the vague "cheering your kid on" paragraph — user
-  called it poorly worded — with a plain, light-touch warning that the
-  rate compounds *monthly*, so it adds up on a large balance over time.
-  The example's math changed too: it previously assumed the *entire*
-  nominal rate applies every month, which is wrong (the boost only
-  accrues on up-ticks — see `boost_service._walk`) and used a 2%/month
-  "typical" gain the user correctly flagged as unrealistic for the
-  S&P 500 (real long-run average is closer to 0.8%). Now uses 1%/month
-  and shows the proration explicitly (illustrative "about two-thirds of
-  days were up, so about two-thirds of the rate applied") rather than
-  implying the full rate always lands — `EXAMPLE_MONTHLY_GAIN_PCT` and
-  the new `EXAMPLE_UP_DAY_FRACTION` constant in `boost-settings-form.tsx`
-  drive this. If asked to touch this copy again, re-read this whole
-  entry first — several of these were direct corrections to an earlier
-  version that looked reasonable in isolation but didn't hold up.
-- **Seventh round — a straight copy-editing pass, not a content
-  change.** The user called out the previous round's prose as reading
-  visibly AI-written: the same em-dash "setup — payoff" rhythm repeated
-  in nearly every paragraph, plus one paragraph phrased as "not just
-  X — Y" antithesis. Tightened every paragraph to vary sentence rhythm
-  and cut redundant clauses (the example went from three em-dashes to
-  one). The hub card's teaser, added to this page two rounds ago at the
-  user's own request, was removed again on their own follow-up call —
-  it's back to living only on the hub. The monthly-compounding warning
-  was also corrected on substance, not just style: it originally said
-  "adds up every month, not just once," which the user pointed out is
-  backwards — the *configured rate* is monthly, but what a kid actually
-  earns lands in small *daily* pieces (matches the "~0.10% added on a
-  day it's rising" line already on this page) — now reads "The rate is
-  monthly, but your kid earns it in small daily pieces." If touching
-  this copy again, preserve that rhythm variety rather than reverting
-  to a uniform em-dash pattern.
-- **Eighth round — two more corrections on the same page.** The purpose
-  paragraph still didn't land; the user asked for it to literally open
-  with "The idea behind the stock boost is..." — done verbatim. The
-  monthly-compounding line was missing the actual point: the user
-  wants a parent to viscerally register that 3%/month is enormous
-  next to a real-world savings rate (quoted per *year*), without
-  sounding alarmist. Added a live, rate-dependent calculation — new
-  `RATE_CONTEXT_AMOUNT` (1000) and `yearlyBoostOnRateContext =
-  1000 * ((1 + rate/100)**12 - 1)`, using whatever rate the stepper is
-  *currently* on (not the fixed `RECOMMENDED_RATE` the worked Example
-  box anchors to) — so the paragraph updates live as the parent moves
-  the stepper: "At 3.0%/month, $1,000 held for a year earns about
-  $425.76 from the boost alone." A concrete, moving number in context
-  does the "this is a lot" job better than another adjective would.
-- **Deferred by explicit user request, not forgotten:** "interest from
-  parent" (a simpler flat monthly rate on cash balance, meant to compete
-  economically with the stock boost) — discussed at length but
-  intentionally out of scope for this round.
-
-**Migration numbering collision across parallel worktrees actually
-happened this session — worth internalizing, not just the abstract
-warning below.** While building the above, `alembic upgrade head` was a
-silent no-op: another worker session (`observability-logging` branch, a
-different worktree entirely) had already claimed revision `0010` for an
-unrelated `request_logs` table and run it against the *shared* dev/test
-DB before this branch's own `0010` file existed. Alembic matches
-revisions by the `revision` string, not the filename or which worktree
-wrote it — so this branch's different `0010` content was treated as
-"already applied" and silently never executed, with no error. The fix
-was renumbering this branch's real migration to `0011`, and — since the
-other worktree's actual file was uncommitted and unreachable from here —
-reconstructing a best-effort placeholder `0010_request_logs_placeholder.py`
-(schema introspected directly off the live shared DB) just so this
-worktree's own alembic graph resolves. **That placeholder must be
-deleted once the real `0010_request_logs.py` lands on master** (confirmed
-with the other worker over cross-session messaging) — check
-`alembic/versions/` for a duplicate `0010` before merging this branch.
-Lesson: checking `versions/` for the next free number (as this file
-already says) isn't enough when several worktrees share one live DB —
-the actual danger is a same-numbered revision from an *uncommitted*
-migration in another worktree already having run against the shared DB,
-which a `git`-only check can't see. Run `alembic current` against the
-shared DB, not just `ls versions/`, before trusting a number is free.
-
-## Status as of 2026-09-06 — request logging, currency history, and earlier work
-
-**Built and verified:** the full v1 flow — Google-only sign-in →
-onboarding (currency + first kids) → home (balances, add/deduct) → kid
-portfolio (holdings, since-purchase %, sell) → buy flow (units/amount
-toggle with a live server-computed quote, snapped to a real tradable
-step size) → per-kid history (general + investment-only, now currency-
-and source-aware — see below) → settings (currency, kid management,
-**real currency conversion with a warning dialog**). 74 backend tests
-pass (`cd backend && pytest`), frontend `npm run build`/`npm run lint`
-are clean.
-
-**Request/performance logging + client-side timing beacon (built
-2026-09-06, backend v1.3.0 / frontend v0.6.0).** Motivated by a real
-report: production feels slow on some clicks, but it's not reproducible
-locally — with zero request-level logging in place beforehand, there was
-no way to tell whether that's Render's free-tier cold start (sleeps
-after 15 min idle, 30-50s to wake), the DB, or something in app code.
-This ships the diagnostic instrumentation, not a fix for the slowness
-itself — see "How to actually find the problem" below for the next step.
-- **`RequestLoggingMiddleware`** (`app/core/request_logging.py`) times
-  every backend request, tags it with `user_id`/`family_id` decoded
-  straight off the session JWT (no dependency on the route's own auth —
-  works even for a request that 401s/404s), and both logs a structured
-  JSON line to stdout (viewable in Render's log tail immediately, no new
-  accounts needed) and writes a row to a new `request_logs` table
-  (migration `0010`) so it's actually queryable/aggregable later — this
-  doubles as the seed data for a future per-family/user activity
-  dashboard (deliberately out of scope for this feature — see TODO.txt),
-  which is why family/user id is captured now even though this feature
-  only uses it for latency, not activity, analysis.
-- **Deliberately a raw ASGI middleware, not `BaseHTTPMiddleware`** — the
-  latter buffers the whole response through an in-memory stream per
-  request, which is itself measurable overhead. Would have been ironic
-  for a performance feature to make requests slower.
-- **`POST /internal/client-metrics`**: the frontend's one shared
-  `request()` function (`frontend/src/lib/api.ts`, used by every API call
-  in the app) times each call — success or failure — and fires a
-  non-blocking beacon here with the real HTTP method, path, duration, and
-  status. This is what tells slow-client-or-network apart from
-  slow-server for the *same* logical action, which server-side logging
-  alone can never do. Auth is optional on this endpoint (a metric from a
-  signed-out screen is still worth logging).
-- **Persistence is fire-and-forget on both write paths**
-  (`spawn_persist_request_log`) — a response must never block on the log
-  INSERT itself, or the feature would add to the very latency it exists
-  to diagnose. Tracked in a module-level set with a done-callback rather
-  than a bare `asyncio.create_task(...)`, per asyncio's own documented
-  warning that an unreferenced Task can be garbage-collected mid-flight.
-- **`path`/`error` columns are `Text`, not a length-capped `String`** —
-  Postgres raises on an oversized `VARCHAR(n)` insert rather than
-  truncating, which is the one thing a *logging* write must never do
-  (an unmatched/malformed raw URL, or an unhandled exception's `repr()`,
-  can't be bounded in advance the way validated user input can).
-- **DB persistence is disabled for the whole pytest suite**
-  (`tests/conftest.py`'s autouse `_no_request_log_persistence`, toggled
-  via `request_logging.set_persist_enabled`) — this middleware writes
-  through its own connection (`SessionLocal`), not the request-scoped
-  session the `client` fixture overrides, so left enabled it would insert
-  a real, never-rolled-back row into the shared dev/test DB on every
-  single request the test suite makes.
-- **Known limitation, not addressed:** `/internal/client-metrics` has no
-  auth requirement, rate limit, or shared secret (unlike `/internal/refresh`'s
-  scheduler-secret header) — it's genuinely reachable by anyone on the
-  internet, and an anonymous flood of POSTs would grow `request_logs` and
-  cost real Neon storage/compute. Left as-is for now given this app's low
-  profile (same risk-tolerance call as the currency-conversion race
-  condition below), but worth knowing if abuse ever shows up in the data.
-- **Real-world multi-worker migration collision, again:** this branch's
-  migration also landed as `0010` while worker-3 (a parallel session, same
-  machine) had independently reached `0010`/`0011` for an unrelated
-  feature, already applied to the shared dev/test DB. Same root cause and
-  resolution pattern as the `0005`-`0008` collision documented below —
-  worker-3 had already reconstructed a placeholder `0010` file (see its
-  own docstring) after discovering `alembic upgrade head` silently no-op'd
-  against a revision id we'd both claimed; coordinated directly via
-  `SendMessage` before pushing, worker-3 will delete their placeholder
-  once this branch's real `0010_request_logs.py` is on `master`.
-
-**How to actually find the production slowness, next** (the point of
-this feature): once this is live, let it collect at least a day of real
-traffic, then query `request_logs` directly — no dashboard needed yet:
-```sql
-SELECT path, source, count(*), avg(duration_ms),
-       percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95
-FROM request_logs
-WHERE created_at > now() - interval '2 days'
-GROUP BY path, source ORDER BY p95 DESC;
-```
-Rule out the cheap explanation first — filter `duration_ms > 5000` and
-check whether those rows cluster right after long gaps for the same
-family (Render's free-tier cold start; no amount of logging fixes that,
-only a paid tier or a keep-warm ping would). Then compare `source='client'`
-vs `source='server'` for the same `path`: a big gap points at
-network/cold-start, a small gap with both slow points at the backend
-itself (likely DB/Neon, per the `pool_recycle` note below). If that
-aggregation doesn't pinpoint it, the natural next step is sub-timing
-(DB time vs. external-API time) inside specific slow endpoints — worth
-doing once you know *which* ones, not before.
-
-**UI polish: currency-symbol font fix, button/color consistency, touch
-targets (built 2026-09-04, frontend-only, v0.5.0).** A parent testing on
-Android saw ₪ rendering broken/heavy — Source Serif 4 (the serif font
-used for every money numeral) has no real ₪ glyph, so it silently fell
-back to a mismatched system serif. Fixed generically, not ₪-specifically:
-- **New `formatMoneyParts`/`<Money>`** (`lib/format.ts`,
-  `components/ui/money.tsx`) split a formatted amount around its
-  currency symbol via `Intl...formatToParts`, so callers can render the
-  symbol in `font-sans` while the numeral stays in the inherited serif —
-  works for any currency, not just ILS. Swapped in at every call site
-  actually rendered under `font-serif` (checked each one individually —
-  most money displays in this app are plain sans-serif already and
-  didn't need touching); the two standalone-symbol spots (buy/debt
-  amount-input prefixes) just got a `font-sans` span directly, no
-  component needed.
-- **Deduct now reads as a distinct, red action** — new
-  `--color-tint-negative` token, plus the balance-update sheet's
-  Add/Deduct toggle (`SegmentedControl`'s `filled` variant) goes solid
-  red when Deduct is active via a new per-option `activeClassName`
-  override (previously both options showed emerald when selected,
-  regardless of which one).
-- **`--color-positive` changed from amber/brass to green** — inherited
-  from the original design handoff's own token value, not a bug in this
-  codebase, but the *only* place amber/brass was reserved for gains
-  while red meant losses read as inconsistent once seen live (kid asked
-  "why is Deducted the same green as everything else, and Added is
-  yellow"). Affects every day-change %/since-purchase %/history-amount
-  display that reads this token — all green now.
-- **44px minimum touch target** (`min-h-11`) on every pill/filled/
-  outlined button app-wide (not plain text links like "History").
-- Home screen: "You owe" → "Total balance", wrapped in a
-  bordered+shadowed card matching the kid cards below it.
-- App version now shown at the bottom of Settings, read directly from
-  `package.json` (`v0.5.0`) so it can't drift out of sync.
-- **Known gap, not addressed:** phone/LAN dev testing with real Google
-  sign-in doesn't work — Google's OAuth redirect-URI validation rejects
-  a private LAN IP outright (this is separate from the "authorized
-  redirect URI list" issue below; registering the LAN IP doesn't fix it
-  because Google won't accept a non-localhost IP literal there at all).
-  An HTTPS tunnel (ngrok et al.) registered with Google is the only
-  workaround found; not set up this session.
-- **If you add a new worktree/change the frontend dev port:** Google's
-  OAuth client needs `http://localhost:<port>/api/auth/callback/google`
-  added to its Authorized redirect URIs (Google Cloud Console →
-  Credentials) or sign-in fails with "Access blocked" — only port 3000
-  was registered originally. This is independent of the client's
-  Testing/Published status (see the launch-compliance entry below) —
-  it's a separate allowlist.
-
-**History now shows every row in the currency it was actually recorded
-in, plus a running balance and the source of each change (built
-2026-09-03).** A parent hit this for real right after the currency-
-change feature below shipped: an old 200 EUR deposit displayed as
-"200 ILS" after converting to ILS, because every row was formatted with
-the family's *current* currency instead of whichever currency was
-active when it was recorded — `debt_transactions.amount` has no
-per-row currency (see "Lessons learned"). Fixed in
-`debts_db_service.list_transactions_with_currency` (used by
-`GET /kids/{id}/debt`): walks a kid's ledger oldest-to-newest and flips
-the tracked currency at each `is_adjustment` row, which now records its
-own `from_currency`/`to_currency` (migration 0006). Also added:
-- **Balance before/after per row**, so a currency-conversion row reads
-  as "was €182.86 → now ₪638.60" instead of just a bare amount — this
-  is what actually makes a cross-currency row legible.
-- **`is_investment`** on the debt row `buy()`/`sell()` write alongside
-  a real investment transaction, so history shows "Bought"/"Sold"
-  instead of a generic "Added"/"Deducted" indistinguishable from a
-  parent manually changing the balance.
-- **Migrations 0007/0008 backfill both of the above** for rows written
-  before migration 0006 existed (parsed from each row's own note text,
-  e.g. "Currency changed: EUR → ILS" or "Bought 0.008 units of QQQ") —
-  a new nullable column has no way to backfill data it never captured,
-  so every *existing* adjustment/buy/sell row would otherwise have kept
-  reading as NULL/false forever. `debts_db_service._adjustment_currencies`
-  also has a note-parsing runtime fallback for the same reason, so a
-  database that hasn't run 0007/0008 yet degrades gracefully instead of
-  the endpoint 500ing (which is exactly what happened before this fix —
-  see "Lessons learned").
-- **Known limitation, not addressed:** if a currency change nets to
-  exactly zero for a kid (e.g. their balance happened to be 0 at that
-  moment), `apply_currency_conversion` skips writing them an adjustment
-  row (would be a no-op) — but `list_transactions_with_currency` uses a
-  kid's *own* adjustment rows to know when their currency changed, so
-  that kid's older rows (if they have prior history that nets to zero)
-  keep reading as today's currency forever instead of the one they were
-  actually recorded in. Rare and left unaddressed; fixing it properly
-  means tracking currency changes at the family level independent of
-  any one kid's balance.
-
-**Currency change now actually converts balances, not just relabels
-them (built 2026-08-21).** Previously, switching a family's currency in
-Settings just flipped `base_currency` — a ₪36 debt silently became "$36"
-after switching to USD instead of the correct ~$10, because
-`debt_transactions.amount` has no per-row currency (it's implicitly
-"whatever `family.base_currency` is right now"). Also, the FX rate cache
-only warmed pairs for currencies already in use, so the first family to
-pick a currency nobody had used yet had no rate to convert with. Fixed:
-- `app/core/currencies.py`'s `SUPPORTED_CURRENCIES` (mirrored in
-  `frontend/lib/currencies.ts`) is now what the scheduler keeps warm
-  against USD, not just currently-used currencies — see
-  `scheduler/jobs.py`.
-- `fx_service.get_rate`/`rate_from_table` triangulate through USD when
-  no direct or inverse pair is cached (the scheduler only ever caches
-  X↔USD, never X↔Y directly for two non-USD currencies).
-- On `PATCH /family/settings`, when the currency actually changes,
-  `debts_db_service.apply_currency_conversion` adds **one adjustment
-  row per kid** sized so the balance converts correctly — existing
-  history rows are never rewritten (a deliberate choice: rewriting would
-  lose per-row provenance; an adjustment row keeps the ledger's audit
-  trail intact and is visible in the kid's history with a note
-  explaining what happened). Investment holdings needed no equivalent
-  fix — they already store their own currency and convert at read time.
-- New `GET /family/settings/currency-preview?to=XXX` backs a
-  confirmation dialog (`currency-change-sheet.tsx`) that shows each
-  kid's real old→new balance before the parent commits — this is
-  presented as a rare, deliberate action, not a silent instant switch.
-- **Known limitation, not addressed:** no row locking on the family
-  during the conversion. Two concurrent `PATCH /family/settings` calls
-  for the same family (e.g. two devices open to Settings at once) could
-  both read the old currency before either commits and double-apply the
-  conversion. Low blast radius (a parent would notice and could just
-  change currency again) and no other write path in this codebase locks
-  rows either, so this was left as-is rather than adding
-  `SELECT ... FOR UPDATE` for a rare, human-paced action — but worth
-  knowing if this ever needs to become bulletproof.
-
-**Launch-compliance: privacy policy, terms of service, and consent
-tracking (built 2026-09-03).** Two pre-launch requirements from spec 4.2
-are done: a real `/privacy` and `/terms` page (Portugal named as
-governing law/venue in the Terms — the app's operator's home
-jurisdiction, chosen deliberately as a deterrent against nuisance
-claims, not as a compliance guarantee — see the conversation this
-shipped from if you need the reasoning again), and a consent gate in
-front of Google sign-in. Key decisions:
-- **Consent is a UI gate, not a piece of data threaded through the
-  OAuth round-trip.** `sign-in-button.tsx`'s `SignInButton` opens a
-  `BottomSheet` ("Before you continue") with a checkbox that must be
-  checked before "Continue with Google" enables; only then does the
-  existing `signIn("google", ...)` fire. This sidesteps needing to pass
-  a consent flag through NextAuth's server-side `jwt` callback (which
-  doesn't have clean access to client state across the Google redirect
-  round-trip) — the button being disabled *is* the enforcement.
-- **`users.consent_accepted_at`** (migration `0009`) is stamped once, in
-  `routes_auth.py`, only when a brand-new user row is created — not on
-  every sign-in. It's the audit-trail record of "this account was
-  created under the consent-gated flow." **NULL means the account
-  predates this feature, not that consent was declined** — it isn't
-  backfilled for existing accounts, since there's nothing honest to
-  backfill.
-- **The Google OAuth client is now published** (Google Cloud
-  Console → Audience → the app moved out of "Testing" mode) — the app
-  only requests non-sensitive scopes (`openid email profile`), so this
-  didn't require Google's manual verification review, just filling in
-  Branding (app info + the two policy links) and publishing. Anyone with
-  a Google account can now sign in, not just an explicit test-user
-  allowlist.
-- Shared layout between the two legal pages lives in
-  `components/legal-page.tsx` (`LegalPage`/`LegalSection`) — write both
-  pages through that rather than re-duplicating the nav/footer shell.
-- **Real-world multi-worker collision, resolved along the way:** this
-  branch's migration was originally also numbered `0005`, colliding with
-  worker-3's in-flight (uncommitted-at-the-time) `0005`-`0008`. See the
-  "If you're picking up work in a parallel worktree" section below for
-  exactly how that got resolved — worth reading if you hit the same
-  thing.
-
-**Deployed and confirmed working** (signed in and tested live on a phone,
-2026-08-20):
-- Frontend: https://family-bank-nine.vercel.app (Vercel, root directory
-  `frontend`, auto-deploys from `master`)
-- Backend: https://familybank-backend.onrender.com (Render, deployed via
-  `render.yaml` at repo root, auto-deploys from `master`)
-- **`master` is the deploy branch for both.** Pushing to `master` on
-  GitHub redeploys both services automatically. Work on a feature/worker
-  branch and merge to `master` when it's ready to go live — don't expect
-  a `worker-N` branch to be reachable in production until it's merged.
-- Env vars live in each platform's dashboard (Render: service →
-  Environment; Vercel: project → Settings → Environment Variables), not
-  in the repo. If you add a new required env var, you need to add it in
-  both the relevant local `.env`/`.env.local` *and* the dashboard, or
-  production will break silently on next deploy.
-- Render free tier sleeps after 15 min idle — first request after that
-  can take 30-50s. Not a bug if something seems slow after a break.
-
-**Not yet done:**
-- See `TODO.txt` at repo root for the user's own running feature-idea
-  list (currency-change UX, pocket money, safety, co-parent sharing,
-  native app, kid login, multi-kid competitions). That file is
-  intentionally left untracked/uncommitted — it's scratch notes, not
-  part of the build.
+- **Auth**: Google-only. NextAuth gets Google's `id_token`, POSTs to
+  backend `POST /auth/sync`, which verifies directly against Google,
+  finds-or-creates the family, returns a backend-issued session JWT —
+  that JWT (not Google's) is what every other request carries.
+- **Multi-tenancy**: every family-scoped query filters by `family_id`
+  from the verified JWT server-side, never the request body/path.
+  `app/api/deps.py`'s `get_kid`/`get_family`/`get_kid_and_family` are the
+  enforcement point (a `kid_id` from another family 404s) —
+  `tests/test_api_family_isolation.py` guards this property.
+- **Currency**: prices/FX fetched by one in-process scheduler job
+  (`app/scheduler/loop.py`, every 5h), stored raw (native currency).
+  Every read converts to the requesting family's currency at read time
+  (`fx_service.py`). The FX cache only stores X↔USD pairs — anything
+  converting two non-USD currencies must triangulate through USD.
+  Nothing per-family/per-request calls Yahoo directly.
+- **Unit steps**: buy/sell snaps to a "nice" tradable granularity
+  (`investing_service.unit_step_for_price`/`round_to_step`, mirrored in
+  frontend `lib/format.ts`'s `defaultUnitStep` — keep both in sync).
+- A kid's cash balance is *always* the signed sum of `debt_transactions`
+  — never stored redundantly. Buy/sell write debt_transaction rows too.
 
 ## Running locally
 
 ```bash
 # backend
 cd backend && .venv/Scripts/activate
-uvicorn app.main:app --reload --port 8001
+uvicorn app.main:app --reload --port <your-port>
 
 # frontend (separate terminal)
-cd frontend && npm run dev
+cd frontend && npm run dev -- -p <your-port>
 ```
 
-Both need `.env`/`.env.local` filled in — see each README. The backend
-now runs its own in-process scheduler (refreshes prices/FX every 5h
-automatically, logs when it does) — you don't need to manually trigger
-`/internal/refresh` in normal dev, only if you want fresher data sooner.
+Both need `.env`/`.env.local` filled in (gitignored — copy from
+`.env.example`, ask the user for `DATABASE_URL`). Backend runs its own
+scheduler (refreshes prices/FX every 5h) — no need to manually hit
+`/internal/refresh` in normal dev.
 
-### Database: dev/test branch vs. production
+### Database: dev/test vs. production
 
-There are now two separate Neon branches — **use the dev/test one for
-everything except the deployed app itself**:
+Two Neon branches — **use dev/test for everything except the deployed
+app**:
+- **Production**: only Render's `DATABASE_URL` should point here. Never
+  put it in a local `.env`.
+- **Dev/test branch**: what `backend/.env` points at locally (hostname
+  has changed before and may again — always read it from `backend/.env`,
+  never hardcode it; ask the user for the connection string if needed,
+  it's gitignored). Copy-on-write snapshot of production, now fully
+  independent — safe to modify/delete. Connection string from Neon's
+  dashboard is `postgresql://...` — must be edited to
+  `postgresql+asyncpg://...` and have `channel_binding`/`sslmode` params
+  dropped (asyncpg doesn't parse them) before it works here.
+- Prefer the synthetic test family for ad-hoc testing:
+  `family_id=00000000-0000-0000-0000-000000000001`,
+  `user_id=00000000-0000-0000-0000-000000000002` (mint a JWT with
+  `issue_session_token`) — keeps scratch data separate from the copied
+  real-looking family.
+- The pytest suite is safe to run against either DB — every test runs
+  inside one outer transaction rolled back at teardown
+  (`tests/conftest.py`, `join_transaction_mode="create_savepoint"`).
 
-- **Production** (`ep-crimson-wildflower-...`) — only Render's
-  `DATABASE_URL` env var should point at this. Never put it in a local
-  `.env`; you shouldn't need to touch it directly at all.
-- **Dev/test branch** (`ep-autumn-violet-...` as of 2026-09-03 — this
-  has already changed hostname once, when the original `ep-purple-mud-...`
-  branch's password stopped working and the user cut a fresh Neon
-  branch; **don't hardcode the hostname anywhere, always read it from
-  `backend/.env`**, and don't be surprised if it's changed again by the
-  time you read this) — what `backend/.env` points at locally, and what
-  all local/worktree work and the pytest suite should run against.
-  Created as a Neon branch (copy-on-write snapshot) from production, so
-  its schema is current (migrations applied through 0009 as of this
-  writing) and it happens to contain a *copy* of what was real family
-  data at branch-creation time — that copy is now fully independent of
-  production, so it's fine to modify or delete during testing. If you
-  need the exact connection string, ask the user (it's in
-  `backend/.env`, which is gitignored — never committed) rather than
-  guessing at the hostname. Note the connection string Neon's dashboard
-  hands you is `postgresql://...` — this project needs the async driver,
-  so it must be edited to `postgresql+asyncpg://...` (and the
-  `channel_binding`/`sslmode` query params dropped, since asyncpg
-  doesn't parse them the way libpq does) before it'll work here.
+Every worktree needs its own `backend/.env`/`frontend/.env.local`
+(gitignored) — copy from `.env.example` or another working worktree.
 
-Within the dev/test branch:
+## Lessons learned (don't reintroduce these)
 
-1. **Prefer the isolated synthetic test family** for ad-hoc/manual
-   testing over the copied real-looking one:
-   `family_id=00000000-0000-0000-0000-000000000001`,
-   `user_id=00000000-0000-0000-0000-000000000002`. Mint a session JWT
-   for it with `issue_session_token` and test against that — keeps your
-   scratch data recognizable and separate from the copied family data.
-2. **The pytest suite is safe to run here** (and would have been safe
-   against production too, for the same reason) — every test runs
-   inside one outer transaction rolled back at teardown
-   (`tests/conftest.py`, SQLAlchemy `join_transaction_mode="create_savepoint"`),
-   so nothing persists either way. Documented here mainly so you don't
-   *assume* it's unsafe and avoid running it.
-
-**Every worktree needs its own `backend/.env` / `frontend/.env.local`**
-— they're gitignored, so a fresh worktree checkout won't have them.
-Copy from `.env.example` and fill in the same dev/test `DATABASE_URL`
-(ask the user for it), or copy the values from another already-working
-worktree/checkout.
-
-## Lessons learned this session (don't reintroduce these)
-
-- **The client family store (`src/lib/family-store.tsx`) is seeded from
-  a server-started promise, NOT an `await` in the layout body.**
-  `home/layout.tsx` does `const homePromise = api.get("/home", token)`
-  (no `await`) and passes it to `<FamilyProvider>`, which reads it with
-  React `use()` inside its *own* `<Suspense>`. Awaiting it in the layout
-  body would re-introduce the exact navigation-blocking trap the whole
-  feature exists to remove (a layout that does an uncached fetch blocks
-  every route beneath it and no `loading.tsx` can cover it). The
-  provider must keep its own `<Suspense>` — `use()` suspends and
-  `home/loading.tsx` sits *below* the provider so can't catch it.
-  `requireSession()` in the layout body is fine (cookie-only, no
-  network) and is now the sole auth guard for the segment since the
-  pages are Client Components.
-- **React streaming leaves a `display:none` duplicate of a resolved
-  `<Suspense>` subtree in the DOM during hydration.** A Playwright
-  `getByText("Maya")` can transiently match two copies (one hidden) and
-  fail strict-mode. Not a bug — it's how React delivers streamed
-  Suspense content (hidden div, then moved into place), gone once
-  hydration finishes. Scope test locators to `visible=true` /
-  `.first()` and `waitForLoadState("networkidle")`; the user never sees
-  it.
+- **Client store seeding**: `home/layout.tsx` starts the `/home` fetch
+  un-awaited and passes the promise to `FamilyProvider`, which reads it
+  via `use()` inside its own `<Suspense>`. Awaiting it in the layout body
+  reintroduces the navigation-blocking trap (a layout doing an uncached
+  fetch blocks every route beneath it; `loading.tsx` can't cover a
+  layout, only `page.js`/nested layouts). `requireSession()` (cookie
+  only) is fine directly in the layout body.
+- React streaming leaves a `display:none` duplicate of a resolved
+  `<Suspense>` subtree during hydration — a Playwright locator can
+  transiently match two copies. Not a bug; scope locators to
+  `visible=true`/`.first()`.
 - **Optimistic rollbacks must be inverse patches, not snapshot
-  restores** (see `family-store.tsx`'s mutators). Two rapid optimistic
-  writes (deduct on two kids) each capture a pre-write snapshot; if one
-  fails and restores its snapshot it clobbers the other's change.
-  `applyKidBalanceDelta(id, +d)` rolling back as `applyKidBalanceDelta(id, -d)`
-  composes correctly. Currency change is the one snapshot-restore
-  rollback (big, human-paced, not realistically concurrent).
-- **`sqlalchemy.Enum(SomePyEnum)` binds by the Python member's `.name`
-  ("ADD"), not `.value` ("add"), by default.** Every enum column needs
-  `values_callable=lambda e: [m.value for m in e]` or asyncpg will
-  reject writes with a data-type error the moment real data flows
-  through (psycopg2 is more lenient here, which is why this kind of bug
-  survives review and only shows up against a real driver).
-- **`func.case(...)` is wrong** — `case()` is a standalone SQLAlchemy
-  construct (`from sqlalchemy import case`), not a function under
-  `func`. `func.case(...)` silently builds a nonsense SQL function call
-  instead of erroring at import time.
-- **FastAPI dependency chains autobegin transactions.** Any
-  `Depends(get_kid)` / `Depends(get_family)` that does a `db.get(...)`
-  opens a transaction before your route body runs. A shared
-  `transaction()` helper that does `if session.in_transaction(): yield;
-  return` (skip wrapping) will silently never commit in that case — use
-  a SAVEPOINT (`begin_nested()`) for the inner case instead, and keep
-  explicit `db.commit()` calls at the route level regardless (see
-  `app/core/db.py`'s `transaction()` docstring and `routes_investing.py`).
-- **Neon's pooled endpoint + `pool_pre_ping=True` roughly doubles
-  latency** — it's an extra round-trip on every single request. Use
-  `pool_recycle` instead.
-- **Global, rarely-changing reference data (the price/FX cache) should
-  be cached in-process, not re-queried per request.** See
-  `investing_service.load_price_context` / `clear_price_context_cache`
-  — cleared automatically when the scheduler refreshes, so it can't
-  serve stale-past-a-refresh data, with a 5-minute TTL as a safety net.
-  **If you add a new module-level cache like this, you must also clear
-  it in the `db_session` pytest fixture** (see `tests/conftest.py`) or
-  tests will leak state into each other through the shared process.
-- **Pydantic `Decimal` fields serialize as JSON strings**, not numbers —
-  the frontend types in `lib/types.ts` reflect this; don't "fix" them to
-  `number`.
-- A kid's cash balance is *always* the signed sum of `debt_transactions`
-  — never stored redundantly. Buy/sell write debt_transaction rows too
-  (so the ledger is one source of truth); this is why you'll see
-  `debts_db_service` imported from `investing_service`.
-- **The FX cache only ever stores X↔USD pairs** (see `scheduler/jobs.py`)
-  — never a direct pair between two non-USD currencies. Any code that
-  converts between two arbitrary currencies must triangulate through
-  USD (`fx_service.get_rate`/`rate_from_table` already do this); a naive
-  direct-or-inverse-only lookup will raise/return `None` for a pair like
-  EUR→ILS even though both convert fine individually via USD.
-- **A DB column with no per-row currency field** (like
-  `debt_transactions.amount`) is implicitly "whatever the family's
-  currency is right now" — changing that currency without also writing
-  a conversion adjustment silently corrupts every existing amount's
-  real-world meaning. If you add another currency-denominated column
-  without its own currency field, it has the same trap.
-- **Adding a nullable column that new code assumes is "always set" will
-  crash on every row written before the migration.** This actually
-  happened: `is_adjustment`'s `from_currency`/`to_currency` and
-  `is_investment` (migration 0006) left every pre-existing row with
-  NULL/false forever — a migration that only adds a column has no way
-  to backfill data it never captured — and the endpoint reading them
-  500'd the moment a real user hit an old row. If new code needs a
-  column populated on *every* row, either backfill existing rows in the
-  same migration (or a follow-up one — see 0007/0008, which parse the
-  same info back out of each row's own note text) or write the read
-  path to degrade gracefully when it's NULL, ideally both.
-- **A stuck/orphaned local dev server on Windows can survive `Stop-Process`
-  reporting "process not found" while still actually answering
-  requests** — `netstat -ano` kept showing a PID bound to a port that no
-  process-enumeration tool (`Get-Process`, `Get-CimInstance`, `taskkill`)
-  could find, and it kept serving *stale* code through several full
-  restarts on that port. Cause unconfirmed; the fix was to stop fighting
-  it and just move the dev server to a different port (update
-  `frontend/.env.local`'s `BACKEND_URL`/`NEXT_PUBLIC_BACKEND_URL` to
-  match) rather than trusting that a given port number is actually free
-  just because you just killed everything you can see on it.
-- **Always start `uvicorn` locally with `--reload`.** Started it once
-  without the flag, then did two `git merge`s that changed backend
-  files (a full currency-history rewrite) — the running server kept
-  answering with the pre-merge response shape, which surfaced as a real
-  runtime crash on the frontend (`Cannot read properties of undefined
-  (reading 'toFixed')`, since a field the new frontend code expected was
-  simply missing from the old server's response). Looked exactly like a
-  genuine bug for several minutes before realizing the server just
-  hadn't restarted. `--reload` watches file changes (including ones from
-  git) and avoids this entirely.
-- **The ghost-port issue above recurred multiple times in one session**
-  (2026-09-06, same worktree) — and this time it was caught with hard
-  evidence of the actual mechanism: `Get-NetTCPConnection -LocalPort
-  <port>` returned **two different PIDs both `Listen`ing on the exact
-  same port simultaneously** (confirmed via `netstat` too). One was a
-  genuinely fresh `uvicorn --reload` process (verified via
-  `Get-CimInstance Win32_Process`'s `CommandLine` — a real, current
-  process, not a phantom), the other an old one that should have died
-  when a prior `Stop-Process` ran but evidently didn't. Requests were
-  routed to *whichever one felt like answering* — so a fresh restart,
-  even a *verified* fresh restart with a clean startup log, is not
-  proof you're talking to it: `curl` a field/endpoint you know only the
-  new code has (not just "does it respond") before trusting a restart
-  actually took effect. `Get-CimInstance` failing to resolve a PID that
-  `netstat`/`Get-NetTCPConnection` shows as `LISTENING` is the tell that
-  a second, unkillable listener exists — don't waste time trying to
-  identify or kill it (both attempts failed again this session); move
-  the whole stack to a brand-new port instead (update both
-  `frontend/.env.local` **and** restart the frontend process itself,
-  since Next.js only reads `.env.local` at process start, not on hot
-  reload) and get on with it. Treat "the running server disagrees with
-  the code on disk" as this issue by default on this project before
-  assuming a real regression.
-- **To screenshot a page behind `requireSession()` without real Google
-  OAuth**: mint a backend JWT with `issue_session_token(...)` (as the
-  synthetic test family), then separately mint a matching Auth.js v5
-  session cookie with `next-auth/jwt`'s `encode({ token: { backendToken,
-  familyId, baseCurrency, sub }, secret: process.env.AUTH_SECRET, salt:
-  "authjs.session-token" })` — `salt` must be the literal cookie name,
-  not a random value. Set that as a `Playwright` context cookie
-  (`name: "authjs.session-token"`, `domain: "localhost"`) before
-  `page.goto(...)`. Two gotchas that ate real time: (1) the `encode`/
-  Playwright script needs to run with Node resolving modules from
-  `frontend/`'s own `node_modules` (write it into that directory, not
-  a temp dir, or `require("next-auth/jwt")` fails) and needs real
-  Windows-style paths (`C:/...`), not git-bash's `/c/...` — a path
-  embedded in JS source doesn't get MSYS's automatic argument rewriting;
-  (2) the frontend and backend dev ports must actually match what
-  `backend/.env`'s `CORS_ORIGINS` allows, or every client-side `fetch`
-  silently fails as a CORS preflight rejection that looks nothing like
-  an auth problem.
-- **Even *with* `--reload`, don't assume every edited file actually got
-  picked up.** Editing two files in quick succession, WatchFiles logged
-  only one "detected changes in ... Reloading" line and never restarted
-  for the other — the server kept answering with the pre-edit behavior
-  for that file indefinitely. Worse, `taskkill` on the resulting stale
-  PID reported `SUCCESS` while `netstat` kept showing it bound and still
-  serving requests — the same "kill reports success but it's still
-  alive" symptom as the orphaned-server entry above, but this time with
-  `--reload` on the whole time. If a running dev server's behavior
-  doesn't match a change you just made, don't trust reload logs — kill
-  it and start fresh (or move ports, per the entry above, if killing
-  doesn't stick either). This didn't affect anything shipped — the real
-  verification was the pytest suite, which imports the actual module
-  fresh each run and isn't subject to this class of staleness at all.
-- **A fire-and-forget `asyncio.create_task(...)` with no reference held
-  is a documented footgun** — asyncio's own docs warn the Task can be
-  garbage-collected mid-execution if nothing else references it. Keep a
-  module-level `set` of in-flight tasks and drop each one via
-  `task.add_done_callback(the_set.discard)` instead of calling
-  `create_task` bare (see `request_logging.spawn_persist_request_log`).
-- **Postgres raises on an oversized `VARCHAR(n)` insert — it does not
-  silently truncate.** A column meant to hold a server-generated string
-  you don't fully control the length of (an exception's `repr()`, a raw
-  unmatched request path) needs `Text`, not a capped `String`, or a rare
-  edge case turns a logging write into a crash (caught here since it's
-  wrapped in try/except, but the row is silently lost instead of stored).
-  Reserve length-capped columns for fields already validated at a
-  boundary (Pydantic, a fixed enum) where the cap can never be exceeded.
-- **A module-level asyncpg connection pool (`app/core/db.py`'s
-  `engine`/`SessionLocal`) is not event-loop-aware, and pytest-asyncio
-  gives every test function its own event loop by default.** A
-  connection pooled during one test (via a direct `SessionLocal()` call
-  — see `tests/test_scheduler.py`) can get handed back out to a
-  *later* test's different loop and crash with `RuntimeError: Event
-  loop is closed` on its very first use there — not a bug in whichever
-  test happens to draw the stale connection. Only bites a test file
-  once *two or more* of its tests touch `SessionLocal`/`engine`
-  directly (the normal `db_session`/`client` fixtures use their own
-  separate per-test engine and don't have this problem). Fix: an
-  autouse fixture in that file that disposes `engine`'s pool before and
-  after each test (see `tests/test_scheduler.py`'s
-  `_dispose_module_engine_pool`) — forces a fresh, current-loop
-  connection instead of reusing a stale one, regardless of test order.
-- **`AsyncSession` cannot be used concurrently** (SQLAlchemy's own
-  documented constraint — one connection runs one statement at a time),
-  so `asyncio.gather`-ing independent queries within one request isn't
-  a safe way to cut latency here without opening a second
-  session/connection per concurrent branch. That in turn conflicts with
-  this codebase's test-isolation strategy: `tests/conftest.py` runs
-  every test inside one *uncommitted* outer transaction
-  (`join_transaction_mode="create_savepoint"`), so a second,
-  independently-opened connection mid-request literally can't see a
-  test's seeded-but-uncommitted fixture rows (plain Postgres
-  transaction isolation — nothing SQLAlchemy-specific). If you want to
-  genuinely parallelize DB reads within a request, the number of
-  round-trips is the lever that's actually safe to pull (fewer,
-  broader queries — e.g. a `JOIN` instead of two `SELECT`s), not
-  concurrency on the existing session.
-
-## Architecture quick-reference
-
-- **Auth**: Google-only. NextAuth on the frontend gets Google's own
-  `id_token`, POSTs it to backend `POST /auth/sync`, which verifies it
-  directly against Google (never trusts the frontend), finds-or-creates
-  the family, and returns a backend-issued session JWT. That JWT (not
-  Google's) is what every other request carries — see
-  `backend/README.md`'s "Auth flow" section.
-- **Multi-tenancy**: every family-scoped query is filtered by
-  `family_id` pulled from the verified JWT server-side, never from the
-  request body/path. `backend/app/api/deps.py`'s `get_kid`/`get_family`
-  are the enforcement point — a `kid_id` from another family 404s, it
-  never leaks. This is the property `tests/test_api_family_isolation.py`
-  exists to guard.
-- **Currency**: prices/FX are fetched by one scheduler job (now genuinely
-  automatic — `app/scheduler/loop.py`, runs every 5h in-process),
-  4-5x/day, stored raw (native currency). Every read converts to the
-  requesting family's currency at read time (`fx_service.py`). Nothing
-  per-family or per-request ever calls Yahoo directly.
-- **Unit steps**: buying/selling snaps to a "nice" tradable granularity
-  so a purchase always costs something sensible (1-10 in the family's
-  currency) — `investing_service.unit_step_for_price` /
-  `round_to_step`. The frontend's `lib/format.ts`'s `defaultUnitStep`
-  mirrors the same algorithm for the buy screen's stepper UI; keep them
-  in sync if you touch either.
+  restores** — two concurrent optimistic writes each snapshotting
+  pre-write state will clobber each other on rollback if one fails.
+  `applyKidBalanceDelta(id, +d)` rolling back as `(id, -d)` composes
+  correctly. Currency change is the one deliberate snapshot-restore
+  (big, human-paced, not realistically concurrent).
+- `sqlalchemy.Enum(SomePyEnum)` binds by `.name` not `.value` by
+  default — always pass `values_callable=lambda e: [m.value for m in e]`
+  or asyncpg rejects writes (psycopg2 is more lenient, so this survives
+  review until a real driver is hit).
+- `func.case(...)` is wrong — `case()` is a standalone construct
+  (`from sqlalchemy import case`), not under `func`.
+- FastAPI dependency chains (`Depends(get_kid)` etc.) autobegin a
+  transaction before the route body runs — a shared `transaction()`
+  helper needs a SAVEPOINT (`begin_nested()`) for the already-in-progress
+  case, not a skip-wrapping no-op (see `app/core/db.py`).
+- Neon's pooled endpoint + `pool_pre_ping=True` roughly doubles latency
+  (extra round-trip per request) — use `pool_recycle` instead.
+- Global rarely-changing reference data (price/FX cache) should be
+  cached in-process (`investing_service.load_price_context`), cleared on
+  scheduler refresh + a TTL safety net. **Any new module-level cache
+  must also be cleared in the `db_session` pytest fixture** or tests
+  leak state through the shared process.
+- Pydantic `Decimal` fields serialize as JSON strings, not numbers —
+  frontend `lib/types.ts` reflects this deliberately.
+- A DB column with no per-row currency (e.g. `debt_transactions.amount`)
+  is implicitly "whatever the family's currency is right now" — changing
+  currency without a conversion adjustment row silently corrupts every
+  existing amount's meaning.
+- Adding a nullable column new code assumes is "always set" crashes on
+  every pre-migration row — backfill in the same/a follow-up migration,
+  or degrade gracefully on NULL, ideally both.
+- **Windows dev-server ghost-port bug, recurs across sessions**: a
+  killed process can survive `Stop-Process`/`taskkill` reporting success
+  while still actually answering requests — `netstat`/
+  `Get-NetTCPConnection` shows a PID bound to a port that
+  `Get-Process`/`Get-CimInstance` can't resolve, and it silently serves
+  *stale* code, sometimes alongside a second, genuinely-fresh listener
+  on the exact same port (whichever one answers is nondeterministic).
+  Don't trust a clean restart log — `curl` a field/endpoint only the new
+  code has. Don't waste time trying to kill the ghost; move the whole
+  stack to a new port (update `.env.local` **and** restart the frontend
+  process — Next only reads `.env.local` at process start) and move on.
+  Treat "running server disagrees with code on disk" as this bug by
+  default on this project.
+- Always run `uvicorn` with `--reload` locally — without it, a `git
+  merge` that changes backend files can leave the server answering with
+  the pre-merge shape, which looks exactly like a real frontend bug.
+  Even *with* `--reload`, don't assume every edited file was picked up —
+  WatchFiles has logged only one reload for two near-simultaneous edits;
+  if behavior doesn't match a change, kill and restart fresh.
+- To screenshot a page behind `requireSession()` without real Google
+  OAuth: mint a backend JWT (`issue_session_token`) + a matching Auth.js
+  v5 session cookie via `next-auth/jwt`'s `encode({token, secret:
+  AUTH_SECRET, salt: "authjs.session-token"})` (salt must be the literal
+  cookie name), set as a Playwright context cookie before `page.goto`.
+  Run the encode script from inside `frontend/` (needs its
+  `node_modules`) with real Windows-style paths, and make sure frontend/
+  backend ports match `CORS_ORIGINS` or every fetch fails as an
+  unhelpful CORS rejection.
+- A fire-and-forget `asyncio.create_task(...)` with no held reference
+  can be garbage-collected mid-flight (documented asyncio footgun) —
+  keep a module-level `set` of in-flight tasks, drop via
+  `task.add_done_callback(the_set.discard)`.
+- Postgres raises on an oversized `VARCHAR(n)` insert, it does not
+  truncate — use `Text` for server-generated strings of uncontrolled
+  length (an exception `repr()`, a raw request path); reserve capped
+  `String` for already-validated fields.
+- A module-level asyncpg pool (`app/core/db.py`'s `engine`) is not
+  event-loop-aware; pytest-asyncio gives each test its own loop. A
+  connection pooled via a direct `SessionLocal()` call in one test can
+  get handed to a later test's different loop and crash with `RuntimeError:
+  Event loop is closed`. Any test file where 2+ tests touch
+  `SessionLocal`/`engine` directly needs an autouse fixture disposing the
+  pool before/after each test (see `tests/test_scheduler.py`).
+- `AsyncSession` can't be used concurrently — `asyncio.gather`-ing
+  queries within one request needs a second connection, which breaks
+  `tests/conftest.py`'s uncommitted-outer-transaction isolation. Reduce
+  round-trip *count* (JOINs) instead of trying to parallelize.
 
 ## If you're picking up work in a parallel worktree
 
-You're likely one of several parallel Claude sessions, each in its own
-`git worktree` on its own `worker-N` branch, all sharing this one repo's
-history and — importantly — **the one Neon dev/test branch** (see
-"Database: dev/test branch vs. production" above; this matters even more
-with several sessions running at once). A few things specific to that
-setup:
+Likely one of several parallel Claude sessions, each its own `git
+worktree` on its own `worker-N` branch, sharing this repo's history and
+**the one Neon dev/test branch**.
 
-### Quick start (worktrees created 2026-08-20)
-
-`backend/.env` and `frontend/.env.local` were pre-copied into each
-worktree with **unique ports already assigned** so all three can run
-their dev servers simultaneously without colliding:
-
-| Worktree | Backend port | Frontend port |
-|---|---|---|
-| `FamilyBank-worker-1` | 8011 | 3011 |
-| `FamilyBank-worker-2` | 8012 | 3012 |
-| `FamilyBank-worker-3` | 8097 (rotated *five* times across 2026-09-06–07 — 8091→8094→8095→8096→8097 — chasing the ghost-listener bug below, which keeps recurring even on a genuinely fresh `--reload` process; check `netstat`/`Get-NetTCPConnection`/`frontend/.env.local` for the current truth rather than trusting this table, and don't be surprised if it's moved again. Given how often `--reload` alone has turned out to be lying about serving current code this session, **prefer a full kill-and-restart over trusting a reload notice** before believing a route/field is "still missing") | 3013 |
-
-First time in a given worktree, install deps (not shared across
-worktrees — `.venv`/`node_modules` are gitignored), then start with the
-matching port explicitly:
-
-```bash
-cd backend && python -m venv .venv && .venv/Scripts/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port <your-backend-port>
-
-cd frontend && npm install
-npm run dev -- -p <your-frontend-port>
-```
-
-If a fourth worktree gets created later, pick the next port pair
-(8014/3014, etc.) and update its `.env`/`.env.local` the same way.
-
-- `master` is the trunk **and the deploy branch** (see "Deployed and
-  confirmed working" above) — branch off it, merge back into it, and
-  know that merging to `master` redeploys production for everyone.
-  Coordinate before merging if your change touches something another
-  worker is also mid-way through (schema/migrations especially — two
-  workers both adding, say, "0005_*.py" will collide; check
-  `alembic/versions/` for the latest number before naming a new one).
-  This isn't hypothetical — it happened on 2026-09-03: worker-3 had
-  0005-0008 committed locally (not yet in `master`) and already applied
-  to the shared dev/test branch, while worker-2 had independently
-  written its own 0005. Resolution: message the other session directly
-  (`ListAgents`/`SendMessage` — they're interactive Claude sessions on
-  the same machine, not black boxes) to confirm what's actually applied
-  vs. still in flight, rename your migration to sit after theirs
-  (down_revision pointing at their real head), then to actually run
-  `alembic upgrade head` locally you need their migration *files*
-  physically present (Alembic needs the whole chain on disk to resolve
-  revisions, even though it won't re-run already-applied ones) — copy
-  them in from their worktree, run your migration, then delete the
-  copies again so your branch's diff stays just your own file. Their
-  migrations still need to land in `master` before yours can merge
-  cleanly (down_revision references a revision `master` doesn't have
-  yet).
-- Don't assume you're the only session running. If something in the DB
-  looks different from what you expect (an extra migration applied, test
-  data you didn't create), another worker probably did it — check
-  `git log`/recent migrations before assuming it's a bug.
-- Pull `master` before starting and periodically while working, so you
-  merge from a recent base rather than discovering a large conflict at
-  the end.
-- There's deliberately no separate long-lived `dev`/staging branch below
-  `master`; this project is small enough that the extra layer isn't
-  worth it (see git history around 2026-08-20 if you want the
-  reasoning). Check `git branch -a` if that's changed since this was
-  written.
-- Before calling anything done: run the backend test suite
-  (`cd backend && pytest`), the frontend build+lint
-  (`npm run build && npm run lint`), and — for anything touching a
-  screen — actually look at it (Playwright screenshot against a
-  throwaway preview route, or the real dev server) rather than trusting
-  the code alone. This whole app was built that way; findings from
-  actually running it caught several bugs static review missed.
-- If your change touches the price/FX cache, the enum columns, or the
-  transaction/autobegin pattern, re-read "Lessons learned" above first.
-- Update this file's "Status" section when you finish, so the next
-  session (or the next parallel worktree) starts from accurate ground
-  truth instead of re-deriving it.
+- Each worktree has its own `backend/.env`/`frontend/.env.local` with a
+  pre-assigned port pair (worker-1: 8011/3011, worker-2: 8012/3012,
+  worker-3: last known 8100/3013 — **worker-3's port has drifted
+  repeatedly chasing the ghost-port bug above; check `netstat`/
+  `Get-NetTCPConnection`/`.env.local` for ground truth, don't trust this
+  table**). A new worktree: pick the next free pair, install deps fresh
+  (`.venv`/`node_modules` are gitignored, not shared).
+- **`master` is the trunk and deploy branch** — merging to it redeploys
+  production. Coordinate before merging anything touching what another
+  worker is also mid-way through, **especially migrations**: check
+  `alembic/versions/` for the latest number, but that's not sufficient —
+  another worktree's *uncommitted* migration may already be applied
+  against the shared DB. Run `alembic current` against the shared DB (or
+  message the other session via `ListAgents`/`SendMessage`) before
+  trusting a number is free. This has collided for real, more than once
+  (migrations 0005, 0010 each independently claimed by two sessions) —
+  resolution pattern: confirm what's actually applied vs. in-flight with
+  the other session, renumber yours after theirs, temporarily copy their
+  migration file(s) in to resolve the alembic chain locally, delete the
+  copies once done, and know theirs must land in `master` before yours
+  can merge cleanly.
+- Don't assume you're the only session running — unexpected DB state
+  (extra migration, test data) is probably another worker, check `git
+  log`/recent migrations before assuming a bug.
+- Pull `master` periodically to avoid a large end-of-session conflict.
+- No separate `dev`/staging branch below `master` — deliberate, project
+  is small enough not to need it.
+- Before calling anything done: backend test suite (`cd backend &&
+  pytest`), frontend `build && lint`, and actually look at any touched
+  screen (Playwright or the real dev server) — this project has
+  repeatedly found bugs static review alone missed.
+- Update this file's status section when you finish a session of
+  meaningful work.

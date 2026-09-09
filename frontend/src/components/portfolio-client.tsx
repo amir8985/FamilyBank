@@ -2,14 +2,13 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useSession } from "next-auth/react";
 import { TickerBadge } from "@/components/ui/ticker-badge";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Money } from "@/components/ui/money";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SavingsDepositSheet } from "@/components/savings-deposit-sheet";
 import { SavingsKindBadge } from "@/components/ui/savings-badge";
-import { useFamily } from "@/lib/family-store";
+import { useFamily, useKidLinks } from "@/lib/family-store";
 import { invalidateKid } from "@/lib/use-cached-resource";
 import { api, ApiError } from "@/lib/api";
 import { formatMoney, formatPct, trimUnits } from "@/lib/format";
@@ -78,8 +77,8 @@ export function PortfolioClient({
   catalogLoading?: boolean;
   savingsLoading?: boolean;
 }) {
-  const { data: session } = useSession();
-  const { refreshHome } = useFamily();
+  const { token, refreshHome } = useFamily();
+  const links = useKidLinks(kidId);
   const [tab, setTab] = useState<Tab>(initialTab);
   const [sellingAll, setSellingAll] = useState(false);
   const [sellAllError, setSellAllError] = useState<string | null>(null);
@@ -92,12 +91,12 @@ export function PortfolioClient({
   const savingsValue = Number(savings.savings_value);
 
   async function handleSellEverything() {
-    if (!session?.backendToken) return;
+    if (!token) return;
     if (!confirm(`Sell every stock ${portfolio.kid_name} owns? Savings aren't affected. This can't be undone.`)) return;
     setSellingAll(true);
     setSellAllError(null);
     try {
-      await api.post(`/kids/${kidId}/sell-all`, session.backendToken);
+      await api.post(`/kids/${kidId}/sell-all`, token);
       invalidateKid(kidId);
       refreshHome();
     } catch (e) {
@@ -112,7 +111,7 @@ export function PortfolioClient({
       <div className="pt-[58px] px-5 pb-1 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <Link
-            href="/home"
+            href={links.home}
             aria-label="Back"
             className="w-[26px] h-[26px] flex items-center justify-center text-emerald text-lg"
           >
@@ -122,7 +121,7 @@ export function PortfolioClient({
             {portfolio.kid_name}&apos;s Investments &amp; Savings
           </h1>
         </div>
-        <Link href={`/home/kids/${kidId}/investments-history`} className="text-[12.5px] font-semibold text-emerald">
+        <Link href={`${links.pagePrefix}/investments-history`} className="text-[12.5px] font-semibold text-emerald">
           History
         </Link>
       </div>
@@ -170,7 +169,7 @@ export function PortfolioClient({
               return (
                 <Link
                   key={d.deposit_id}
-                  href={`/home/kids/${kidId}/savings/${d.deposit_id}`}
+                  href={`${links.pagePrefix}/savings/${d.deposit_id}`}
                   className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex items-center justify-between"
                 >
                   <div className="flex flex-col items-start gap-1">
@@ -202,8 +201,8 @@ export function PortfolioClient({
               const pct = formatPct(h.since_purchase_pct);
               const positive = Number(h.since_purchase_pct ?? 0) >= 0;
               const href = h.lot_id
-                ? `/home/kids/${kidId}/lots/${h.lot_id}`
-                : `/home/kids/${kidId}/buy/${h.symbol}?from=holdings`;
+                ? `${links.pagePrefix}/lots/${h.lot_id}`
+                : `${links.pagePrefix}/buy/${h.symbol}?from=holdings`;
               return (
                 <Link
                   key={h.lot_id ?? h.symbol}
@@ -272,14 +271,14 @@ export function PortfolioClient({
                 title="Baskets"
                 subtitle="A slice of many companies at once — steadier, simpler."
                 assets={catalog.filter((a) => a.kind === "basket")}
-                kidId={kidId}
+                buyHrefBase={links.pagePrefix}
                 currency={currency}
               />
               <CatalogSection
                 title="Individual stocks"
                 subtitle="One company at a time — more ups and downs."
                 assets={catalog.filter((a) => a.kind === "stock")}
-                kidId={kidId}
+                buyHrefBase={links.pagePrefix}
                 currency={currency}
               />
             </>
@@ -350,13 +349,13 @@ function CatalogSection({
   title,
   subtitle,
   assets,
-  kidId,
+  buyHrefBase,
   currency,
 }: {
   title: string;
   subtitle: string;
   assets: AssetOut[];
-  kidId: string;
+  buyHrefBase: string;
   currency: string;
 }) {
   if (assets.length === 0) return null;
@@ -372,7 +371,7 @@ function CatalogSection({
         return (
           <Link
             key={asset.symbol}
-            href={`/home/kids/${kidId}/buy/${asset.symbol}?from=buy`}
+            href={`${buyHrefBase}/buy/${asset.symbol}?from=buy`}
             className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex items-center justify-between"
           >
             <div className="flex items-center gap-3">

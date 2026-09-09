@@ -7,7 +7,7 @@ from app.models.investment import (
     InvestmentTransaction,
     InvestmentTransactionType,
 )
-from app.models.kid import Kid
+from app.models.kid import Kid, KidInvite
 from app.models.request_log import RequestLog
 from app.models.savings import SavingsDeposit, SavingsPlan
 from app.models.user import User
@@ -25,6 +25,7 @@ __all__ = [
     "InvestmentTransaction",
     "InvestmentTransactionType",
     "Kid",
+    "KidInvite",
     "RequestLog",
     "SavingsDeposit",
     "SavingsPlan",

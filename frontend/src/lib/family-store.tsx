@@ -28,8 +28,20 @@ import type { FamilyHome, KidSummary } from "@/lib/types";
 // optimistically and a background `/home` refetch reconciles it against
 // server truth. See CLAUDE.md's 2026-09-07 "Instant UX" entry.
 
-type FamilyStore = {
+export type FamilyStore = {
   home: FamilyHome;
+  /** Backend session token for API calls — the parent's NextAuth-issued
+   * token here; the kid's session token in KidFamilyProvider. Shared
+   * components read it from here instead of `useSession()` so the same
+   * component works in both the parent app and the kid app. */
+  token: string | null;
+  /** Root of the current app: `/home` (parent) or `/kid` (kid). Shared
+   * components build per-kid hrefs from this — prefer the `useKidLinks`
+   * helper below over touching it directly. */
+  basePath: string;
+  /** True inside the kid app. Changes where "home" and "portfolio" links
+   * point (the kid's home is `/kid/kids/<id>`, not `/kid`). */
+  isKid: boolean;
   /** Refetch `/home` and replace the store with server truth. Deduped —
    * concurrent calls share one request. */
   refreshHome: () => Promise<void>;
@@ -54,12 +66,28 @@ type FamilyStore = {
   ) => () => void;
 };
 
-const FamilyContext = createContext<FamilyStore | null>(null);
+export const FamilyContext = createContext<FamilyStore | null>(null);
 
 export function useFamily(): FamilyStore {
   const ctx = useContext(FamilyContext);
   if (!ctx) throw new Error("useFamily must be used within a FamilyProvider");
   return ctx;
+}
+
+/** Resolve the in-app hrefs for one kid, correct for whichever app
+ * (parent or kid) the calling component is rendering in:
+ *  - `pagePrefix`  — base for sub-pages: `${pagePrefix}/buy/AAPL`, `/history`, `/lots/x`, `/savings/x`
+ *  - `portfolio`   — that kid's portfolio screen
+ *  - `home`        — the "up and out" target (parent: the family home; kid: their own home)
+ */
+export function useKidLinks(kidId: string) {
+  const { basePath, isKid } = useFamily();
+  const pagePrefix = `${basePath}/kids/${kidId}`;
+  return {
+    pagePrefix,
+    portfolio: isKid ? `${pagePrefix}/portfolio` : pagePrefix,
+    home: isKid ? pagePrefix : basePath,
+  };
 }
 
 // Mirrors backend AVATAR_PALETTE (app/models/kid.py) — kept in sync so an
@@ -134,13 +162,36 @@ function FamilyStoreRoot({
     return run;
   }, []);
 
-  // Cheap freshness net: reconcile when the tab regains focus.
+  // Freshness nets for changes this tab didn't make — a kid trading in
+  // their own app, or the parent acting in another tab. Reconcile when
+  // the tab regains focus, and poll on a slow interval while it's
+  // visible (paused while hidden so a backgrounded tab costs nothing).
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState === "visible") refreshHome();
     };
     document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
+
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const startPoll = () => {
+      if (timer || document.visibilityState !== "visible") return;
+      timer = setInterval(() => {
+        if (document.visibilityState === "visible") refreshHome();
+      }, 30_000);
+    };
+    const stopPoll = () => {
+      if (timer) clearInterval(timer);
+      timer = null;
+    };
+    const onVis = () => (document.visibilityState === "visible" ? startPoll() : stopPoll());
+    document.addEventListener("visibilitychange", onVis);
+    startPoll();
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      document.removeEventListener("visibilitychange", onVis);
+      stopPoll();
+    };
   }, [refreshHome]);
 
   const applyKidBalanceDelta = useCallback((kidId: string, delta: number) => {
@@ -222,6 +273,9 @@ function FamilyStoreRoot({
   const store = useMemo<FamilyStore>(
     () => ({
       home,
+      token: token ?? null,
+      basePath: "/home",
+      isKid: false,
       refreshHome,
       applyKidBalanceDelta,
       addKidOptimistic,
@@ -230,6 +284,7 @@ function FamilyStoreRoot({
     }),
     [
       home,
+      token,
       refreshHome,
       applyKidBalanceDelta,
       addKidOptimistic,

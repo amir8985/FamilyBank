@@ -1,6 +1,5 @@
 "use client";
 
-import { useSession } from "next-auth/react";
 import { useFamily } from "@/lib/family-store";
 import { useCachedResource } from "@/lib/use-cached-resource";
 import { api } from "@/lib/api";
@@ -31,6 +30,7 @@ function synthesizePortfolio(kidId: string, summary: KidSummary | undefined): Po
     total_day_change_pct: null,
     holdings: [],
     prices_as_of: null,
+    boost_buffer_rate: null,
   };
 }
 
@@ -43,9 +43,7 @@ export function KidPortfolioScreen({
   kidId: string;
   initialTab: "holdings" | "buy" | "save";
 }) {
-  const { data: session } = useSession();
-  const { home } = useFamily();
-  const token = session?.backendToken ?? null;
+  const { home, token } = useFamily();
   const summary = home.kids.find((k) => k.id === kidId);
 
   const portfolioRes = useCachedResource<PortfolioOut>(
