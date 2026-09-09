@@ -5,6 +5,7 @@ from app.api.deps import get_family
 from app.core.db import get_db
 from app.models.family import Family
 from app.schemas.investing import AssetDetailOut, AssetOut
+from app.scheduler import jobs
 from app.services import investing_service
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
@@ -15,6 +16,9 @@ async def list_catalog(
     family: Family = Depends(get_family), db: AsyncSession = Depends(get_db)
 ) -> list[AssetOut]:
     ctx = await investing_service.load_price_context(db)
+    # Insurance against a missed external cron run — no-op unless prices
+    # are well past their refresh window (see spawn_refresh_if_stale).
+    jobs.spawn_refresh_if_stale(ctx.prices_as_of)
     rows = investing_service.list_catalog(ctx, family.base_currency)
     return [AssetOut(**r) for r in rows]
 

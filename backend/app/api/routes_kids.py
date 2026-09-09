@@ -11,6 +11,7 @@ from app.core.security import AuthContext, get_current_auth
 from app.models.family import Family
 from app.models.kid import AVATAR_PALETTE, Kid
 from app.schemas.kid import FamilyHome, KidCreate, KidSummary
+from app.scheduler import jobs
 from app.services import debts_db_service, investing_service
 
 router = APIRouter(tags=["kids"])
@@ -27,6 +28,9 @@ async def get_family_home(
     # queries (balances, holdings) regardless of how many kids/holdings
     # there are — was previously 1 + N*(1 + M) queries per kid/holding.
     ctx = await investing_service.load_price_context(db)
+    # Insurance against a missed external cron run — no-op unless prices
+    # are well past their refresh window (see spawn_refresh_if_stale).
+    jobs.spawn_refresh_if_stale(ctx.prices_as_of)
     balances = await debts_db_service.get_balances(db, kid_ids)
     holdings_by_kid = await investing_service.get_holdings_by_kid(db, kid_ids)
 

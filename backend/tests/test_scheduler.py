@@ -13,13 +13,14 @@ directly against the shared dev/test DB rather than relying on a
 per-test rolled-back transaction.
 """
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from app.core.db import SessionLocal, engine
 from app.models.catalog import AssetCatalog, AssetKind, PriceCache
@@ -126,6 +127,97 @@ async def test_run_forever_runs_immediately_when_never_refreshed(monkeypatch):
 
     run_refresh_mock.assert_called_once()
     assert sleep_calls == [loop.settings.scheduler_interval_hours * 3600]
+
+
+async def test_run_refresh_skips_body_when_advisory_lock_already_held(monkeypatch):
+    inner = AsyncMock()
+    monkeypatch.setattr(jobs, "_run_refresh", inner)
+
+    # Hold the lock on this connection for the whole call — no commit, or
+    # the session hands the connection (and the lock) back to the pool.
+    async with SessionLocal() as holder:
+        acquired = await holder.scalar(select(func.pg_try_advisory_lock(jobs._REFRESH_LOCK_KEY)))
+        assert acquired is True
+        try:
+            await jobs.run_refresh()
+            inner.assert_not_awaited()
+        finally:
+            await holder.scalar(select(func.pg_advisory_unlock(jobs._REFRESH_LOCK_KEY)))
+
+
+async def test_run_refresh_runs_body_and_releases_lock_when_free(monkeypatch):
+    inner = AsyncMock()
+    monkeypatch.setattr(jobs, "_run_refresh", inner)
+
+    await jobs.run_refresh()
+    inner.assert_awaited_once()
+
+    # Lock must be free again for the next trigger.
+    async with SessionLocal() as session:
+        reacquired = await session.scalar(select(func.pg_try_advisory_lock(jobs._REFRESH_LOCK_KEY)))
+        assert reacquired is True
+        await session.scalar(select(func.pg_advisory_unlock(jobs._REFRESH_LOCK_KEY)))
+        await session.commit()
+
+
+async def test_run_refresh_releases_lock_even_when_body_raises(monkeypatch):
+    monkeypatch.setattr(jobs, "_run_refresh", AsyncMock(side_effect=RuntimeError("boom")))
+
+    with pytest.raises(RuntimeError):
+        await jobs.run_refresh()
+
+    async with SessionLocal() as session:
+        reacquired = await session.scalar(select(func.pg_try_advisory_lock(jobs._REFRESH_LOCK_KEY)))
+        assert reacquired is True
+        await session.scalar(select(func.pg_advisory_unlock(jobs._REFRESH_LOCK_KEY)))
+        await session.commit()
+
+
+async def test_spawn_refresh_if_stale_noop_when_prices_are_fresh(monkeypatch):
+    monkeypatch.setattr(jobs, "_stale_fallback_enabled", True)
+    triggered = AsyncMock()
+    monkeypatch.setattr(jobs, "run_refresh", triggered)
+
+    jobs.spawn_refresh_if_stale(datetime.now(timezone.utc))
+
+    assert not jobs._stale_refresh_tasks
+    triggered.assert_not_called()
+
+
+async def test_spawn_refresh_if_stale_triggers_when_prices_are_old(monkeypatch):
+    monkeypatch.setattr(jobs, "_stale_fallback_enabled", True)
+    triggered = AsyncMock()
+    monkeypatch.setattr(jobs, "run_refresh", triggered)
+
+    stale = datetime.now(timezone.utc) - timedelta(
+        hours=jobs.settings.refresh_staleness_threshold_hours + 1
+    )
+    jobs.spawn_refresh_if_stale(stale)
+
+    await asyncio.gather(*list(jobs._stale_refresh_tasks))
+    triggered.assert_awaited_once()
+
+
+async def test_spawn_refresh_if_stale_triggers_when_never_refreshed(monkeypatch):
+    monkeypatch.setattr(jobs, "_stale_fallback_enabled", True)
+    triggered = AsyncMock()
+    monkeypatch.setattr(jobs, "run_refresh", triggered)
+
+    jobs.spawn_refresh_if_stale(None)
+
+    await asyncio.gather(*list(jobs._stale_refresh_tasks))
+    triggered.assert_awaited_once()
+
+
+async def test_spawn_refresh_if_stale_is_a_noop_while_disabled(monkeypatch):
+    monkeypatch.setattr(jobs, "_stale_fallback_enabled", False)
+    triggered = AsyncMock()
+    monkeypatch.setattr(jobs, "run_refresh", triggered)
+
+    jobs.spawn_refresh_if_stale(None)
+
+    assert not jobs._stale_refresh_tasks
+    triggered.assert_not_called()
 
 
 async def test_cleanup_old_request_logs_prunes_only_rows_past_retention():

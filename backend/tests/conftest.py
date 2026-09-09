@@ -18,6 +18,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.core import request_logging
+from app.scheduler import jobs as scheduler_jobs
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.rate_limit import clear_rate_limit_state
@@ -39,8 +40,14 @@ def _no_request_log_persistence():
     # suite would insert a real, never-rolled-back row into the shared
     # dev/test database. See request_logging.set_persist_enabled's docstring.
     request_logging.set_persist_enabled(False)
+    # The staleness fallback (spawn_refresh_if_stale, hit by /home and
+    # /catalog) fires a real run_refresh() — real Yahoo calls, a real
+    # non-rolled-back commit — against the shared dev DB, whose prices are
+    # usually stale enough to trip it. Off for the suite.
+    scheduler_jobs.set_stale_fallback_enabled(False)
     yield
     request_logging.set_persist_enabled(True)
+    scheduler_jobs.set_stale_fallback_enabled(True)
 
 
 @pytest_asyncio.fixture

@@ -31,6 +31,72 @@ backend/    FastAPI + SQLAlchemy + Postgres (Neon) — see backend/README.md
 frontend/   Next.js 16 (App Router) + Tailwind v4 — see frontend/README.md
 ```
 
+## Status as of 2026-09-09 — worker-1 `perf-followups`: Cloud Run migration groundwork
+
+**In progress, not shipped.** Prep for moving the backend off Render (in a
+different region from Neon → every DB round-trip pays ~300–450ms) onto
+**Cloud Run in `europe-west3` (Frankfurt)**, next to the Neon DB. Full
+plan, decisions, and step-by-step GCP commands in
+**`docs/cloud-run-migration.md`** — read that, not just this entry.
+
+**Decisions locked with the user:**
+- Refresh trigger = **Cloud Scheduler → `POST /internal/refresh`** on the
+  web service ("option 2a"), *not* a separate Cloud Run Job. Reuses the
+  existing endpoint, so there's one refresh code path shared with the
+  staleness fallback. The ~10s refresh is all `await`ed HTTP and doesn't
+  meaningfully compete with request serving at this scale.
+- Cron = `1 */3 * * *` UTC, one job, every 3h (max gap 3h). NOT
+  market-time-aligned: the boost math prorates by real elapsed time
+  between `price_ticks` (`boost_service._walk`), so cadence doesn't
+  affect boost outcomes, and other exchanges have other hours anyway.
+  Even 3-hourly coverage beats clustering around one market's open/close.
+- Keep `X-Scheduler-Secret` auth (the service allows unauthenticated
+  anyway, so Cloud Run IAM can't scope to one route). No custom domain
+  (only the Vercel frontend + Cloud Scheduler ever call the backend).
+- Migrations run as a Cloud Build step per deploy, not in the Dockerfile
+  (autoscaled containers would race) and not on startup.
+- Auto-deploy on push to `master` via a Cloud Build trigger + `cloudbuild.yaml`
+  — same model as Render.
+
+**Backend code changes done on this branch (108 tests pass, up from 101):**
+- `scheduler/jobs.py`: `run_refresh()` now wraps `_run_refresh()` in a
+  **Postgres session-level advisory lock** (`_REFRESH_LOCK_KEY`). A second
+  trigger while one runs logs + returns immediately — safe for cron-retry
+  overlap, deploy-cutover overlap (Render + Cloud Run both briefly live),
+  or the fallback racing the cron. Stops duplicate `price_ticks` rows
+  (the one non-idempotent part of a refresh). **The lock session must
+  stay open (hold its connection) for the whole refresh — a `commit()`
+  returns the connection to the pool and the `finally` unlock then runs
+  on a different one and no-ops. This cost a test-debug cycle; the code
+  comment says so, don't "optimize" the commit back in.** Trade-off:
+  ~10s idle-in-transaction on one connection, a few times a day — a
+  non-issue at this scale.
+- `scheduler/jobs.py`: `spawn_refresh_if_stale(prices_as_of)` — the
+  **staleness fallback**. `/home` and `/catalog` call it with the
+  `ctx.prices_as_of` they already loaded (zero extra queries on the fresh
+  path). If prices are older than `REFRESH_STALENESS_THRESHOLD_HOURS`
+  (default 10h ≈ 3 missed 3-hourly runs), fires a
+  best-effort background `run_refresh()`. Insurance for a missed cron
+  run, **not** the primary mechanism — on a scale-to-zero host the task
+  can be cut short mid-run. The real "cron died" signal is a Cloud
+  Monitoring alert (see the doc, Part 7).
+- `set_stale_fallback_enabled()` + autouse conftest fixture turns the
+  fallback OFF for the whole test suite — same reason as
+  `request_logging.set_persist_enabled`: it fires a real `run_refresh()`
+  (real Yahoo calls, a real non-rolled-back commit) and `/home`/`/catalog`
+  get hit constantly against a shared dev DB whose prices are usually
+  stale enough to trip it.
+- `config.py`: new `refresh_staleness_threshold_hours` (13.0).
+- `backend/Dockerfile` + `.dockerignore`, `cloudbuild.yaml` (repo root),
+  `render.yaml` comment. Backend version 1.6.0 → 1.7.0.
+
+**Not done:** everything in GCP (project, Artifact Registry, Secret
+Manager, first deploy, Cloud Build trigger, Cloud Scheduler jobs, backup
+Job, monitoring alert), the frontend URL cutover, decommissioning Render.
+All gated on user action + the steps in `docs/cloud-run-migration.md`.
+Also not started: replacing the Yahoo price fetch (deliberately sequenced
+*after* this migration).
+
 ## Current state / handoff (2026-09-07, end of `finish-feature` on `worker-1`)
 
 **What this branch does:** removes the "every click freezes the UI" problem

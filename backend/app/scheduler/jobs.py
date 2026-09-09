@@ -3,6 +3,7 @@ and fx_rates_cache together, 4-5x/day, for every symbol once — never
 per-family, never per-request (spec 4.3).
 """
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -93,7 +94,42 @@ async def _write_prices(
         )
 
 
+# A single fixed key for Postgres' session-level advisory lock, namespaced
+# to "the price/FX refresh job". pg_try_advisory_lock is non-blocking:
+# whoever holds it is refreshing right now, everyone else backs off. This
+# makes it safe for more than one trigger to fire close together — the
+# in-process loop and the /internal/refresh cron overlapping during a
+# deploy cutover, a Cloud Scheduler retry landing on top of the original,
+# or the staleness fallback racing the cron — without double-hitting Yahoo
+# or writing duplicate price_ticks rows (the one non-idempotent part of a
+# refresh; PriceCache/FxRateCache are upserts).
+_REFRESH_LOCK_KEY = 4_150_237_918
+
+
 async def run_refresh() -> None:
+    """Public entry — acquires the advisory lock, then runs _run_refresh()
+    exactly once. A second caller while one is in flight logs and returns
+    immediately rather than blocking or double-running.
+    """
+    async with SessionLocal() as lock_session:
+        # The lock is bound to this connection, so lock_session has to stay
+        # open (and hold the connection) for the whole refresh — a commit
+        # here would return the connection to the pool and the unlock in
+        # `finally` would then run on a different one. That means ~10s of
+        # idle-in-transaction on one connection a few times a day, which is
+        # a non-issue at this scale (one connection out of 15, no vacuum
+        # pressure worth speaking of).
+        acquired = await lock_session.scalar(select(func.pg_try_advisory_lock(_REFRESH_LOCK_KEY)))
+        if not acquired:
+            logger.info("Price/FX refresh already running on another trigger — skipping this one")
+            return
+        try:
+            await _run_refresh()
+        finally:
+            await lock_session.scalar(select(func.pg_advisory_unlock(_REFRESH_LOCK_KEY)))
+
+
+async def _run_refresh() -> None:
     logger.info("Scheduler refresh starting")
 
     async with SessionLocal() as session:
@@ -153,3 +189,57 @@ async def cleanup_old_request_logs() -> int:
         result = await session.execute(delete(RequestLog).where(RequestLog.created_at < cutoff))
         await session.commit()
         return result.rowcount or 0
+
+
+# Keeps a reference to each in-flight fallback task — asyncio can garbage-
+# collect a task nothing else holds mid-execution (its own docs warn about
+# this; same pattern as request_logging.spawn_persist_request_log).
+_stale_refresh_tasks: set[asyncio.Task] = set()
+
+_stale_fallback_enabled = True
+
+
+def set_stale_fallback_enabled(value: bool) -> None:
+    """Test-only switch (see tests/conftest.py's autouse fixture). The
+    fallback fires a real run_refresh() — its own connection, real Yahoo
+    calls, a real (non-rolled-back) commit — so it must be off for the
+    suite, where /home and /catalog get hit constantly against a shared
+    dev DB whose prices are often stale.
+    """
+    global _stale_fallback_enabled
+    _stale_fallback_enabled = value
+
+
+def spawn_refresh_if_stale(prices_as_of: datetime | None) -> None:
+    """Best-effort catch-up refresh, triggered from a user-facing read
+    (/home, /catalog) when the cached prices look too old — insurance for
+    a missed external cron run when SCHEDULER_ENABLED is false.
+
+    `prices_as_of` is the timestamp the caller already has in hand from
+    PriceContext, so the common (fresh) path costs zero extra queries.
+    run_refresh() self-guards with an advisory lock, so this racing the
+    real cron (or a second reader racing this) can't double-run — the
+    loser returns immediately.
+
+    Fire-and-forget: the triggering request returns right away with the
+    slightly-stale data rather than waiting out the ~10s refresh. On a
+    scale-to-zero host the task can be cut short if the instance is torn
+    down mid-run — acceptable for a fallback (the external cron is the
+    real mechanism, a monitoring alert is the real "cron died" signal),
+    but it's why this must not become the primary refresh path.
+    """
+    if not _stale_fallback_enabled:
+        return
+
+    threshold = timedelta(hours=settings.refresh_staleness_threshold_hours)
+    if prices_as_of is not None and datetime.now(timezone.utc) - prices_as_of < threshold:
+        return
+
+    logger.warning(
+        "Prices last refreshed %s (threshold %.0fh) — triggering a fallback refresh",
+        prices_as_of.isoformat() if prices_as_of else "never",
+        settings.refresh_staleness_threshold_hours,
+    )
+    task = asyncio.create_task(run_refresh())
+    _stale_refresh_tasks.add(task)
+    task.add_done_callback(_stale_refresh_tasks.discard)

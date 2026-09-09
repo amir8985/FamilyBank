@@ -40,6 +40,11 @@ services:
       # This process is long-running on Render (unlike Vercel's
       # serverless functions), so the in-process scheduler is the right
       # mechanism here — no external cron needed.
+      # NOTE: the planned Cloud Run migration (docs/cloud-run-migration.md)
+      # sets this to "false" and drives the refresh from Cloud Scheduler →
+      # POST /internal/refresh instead. Keep it "true" here for as long as
+      # Render is the live backend; the advisory lock in run_refresh()
+      # makes a brief overlap between the two harmless.
       - key: SCHEDULER_ENABLED
         value: "true"
       - key: SCHEDULER_INTERVAL_HOURS
