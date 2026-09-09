@@ -54,3 +54,8 @@ class DebtTransaction(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     # instead of a generic "Added"/"Deducted" indistinguishable from a
     # parent manually changing the balance.
     is_investment: Mapped[bool] = mapped_column(Boolean, default=False)
+    # True only for the debt row savings_service writes when a kid moves
+    # cash into a savings plan or withdraws it — same idea as
+    # is_investment: history shows "Moved to savings"/"Savings payout"
+    # rather than a bare "Deducted"/"Added".
+    is_savings: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")

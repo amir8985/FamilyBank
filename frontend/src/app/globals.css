@@ -18,6 +18,8 @@
   --color-tint-icon: oklch(90% 0.015 155); /* settings icon circle */
   --color-tint-dark: oklch(30% 0.05 155); /* text on tint-emerald */
   --color-tint-negative: oklch(92% 0.045 25); /* light red pill bg, e.g. Deduct */
+  --color-tint-brass: oklch(93% 0.05 75); /* light amber sheet/pill bg, e.g. cash-out confirm */
+  --color-brass-dark: oklch(43% 0.1 70); /* text on tint-brass */
 
   --color-avatar-amber: oklch(90% 0.05 75);
   --color-avatar-teal: oklch(88% 0.05 200);
@@ -46,6 +48,8 @@
   --color-tint-icon: var(--color-tint-icon);
   --color-tint-dark: var(--color-tint-dark);
   --color-tint-negative: var(--color-tint-negative);
+  --color-tint-brass: var(--color-tint-brass);
+  --color-brass-dark: var(--color-brass-dark);
   --color-avatar-amber: var(--color-avatar-amber);
   --color-avatar-teal: var(--color-avatar-teal);
   --color-avatar-violet: var(--color-avatar-violet);

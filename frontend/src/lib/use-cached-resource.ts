@@ -60,6 +60,8 @@ export function invalidateKid(kidId: string) {
     `debt:${kidId}`,
     `investment-transactions:${kidId}`,
     `lot:${kidId}:`,
+    `savings:${kidId}`,
+    `savings-deposit:${kidId}:`,
   ]);
   emit();
 }

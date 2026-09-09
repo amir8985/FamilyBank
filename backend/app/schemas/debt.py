@@ -20,6 +20,7 @@ class DebtTransactionOut(BaseModel):
     note: str | None
     is_adjustment: bool
     is_investment: bool
+    is_savings: bool
     currency: str
     previous_currency: str
     balance_before: Decimal

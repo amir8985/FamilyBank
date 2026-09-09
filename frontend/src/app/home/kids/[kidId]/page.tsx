@@ -11,6 +11,7 @@ export default function KidPortfolioPage({
 }) {
   const { kidId } = use(params);
   const searchParams = useSearchParams();
-  const initialTab = searchParams.get("tab") === "buy" ? "buy" : "holdings";
+  const tab = searchParams.get("tab");
+  const initialTab = tab === "buy" ? "buy" : tab === "save" ? "save" : "holdings";
   return <KidPortfolioScreen kidId={kidId} initialTab={initialTab} />;
 }

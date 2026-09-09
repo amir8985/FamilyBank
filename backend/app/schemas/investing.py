@@ -56,6 +56,7 @@ class PortfolioOut(BaseModel):
     kid_name: str
     cash_available: Decimal
     holdings_value: Decimal
+    savings_value: Decimal = Decimal("0")
     total_value: Decimal
     total_day_change_amount: Decimal
     total_day_change_pct: Decimal | None

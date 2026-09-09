@@ -13,6 +13,7 @@ from app.api import (
     routes_internal,
     routes_investing,
     routes_kids,
+    routes_savings,
 )
 from app.core.config import get_settings
 from app.core.request_logging import RequestLoggingMiddleware
@@ -38,7 +39,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="FamilyBank API",
-    version="1.7.0",
+    version="1.8.1",
     lifespan=lifespan,
     # Swagger/ReDoc/schema map out the whole API surface (including
     # /internal/* route names) to anyone who visits them — harmless
@@ -68,6 +69,7 @@ app.include_router(routes_debt.router)
 app.include_router(routes_investing.router)
 app.include_router(routes_catalog.router)
 app.include_router(routes_family.router)
+app.include_router(routes_savings.router)
 app.include_router(routes_internal.router)
 
 

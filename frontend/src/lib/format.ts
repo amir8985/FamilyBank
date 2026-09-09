@@ -17,6 +17,15 @@ export function formatSignedMoney(amount: string | number, currency: string): st
   return value < 0 ? `-${formatted}` : `+${formatted}`;
 }
 
+/** Compounded yearly equivalent of a monthly percentage rate —
+ * 2%/month is ~26.8%/year, not 24%. Mirrors savings_service.annual_rate
+ * on the backend; used only for the "≈ X%/year" hint next to a rate the
+ * parent is setting. */
+export function annualFromMonthly(monthlyPct: string | number): number {
+  const m = typeof monthlyPct === "string" ? Number(monthlyPct) : monthlyPct;
+  return (Math.pow(1 + m / 100, 12) - 1) * 100;
+}
+
 export function formatPct(pct: string | number | null): string | null {
   if (pct === null) return null;
   const value = typeof pct === "string" ? Number(pct) : pct;

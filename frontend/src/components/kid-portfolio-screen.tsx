@@ -5,10 +5,11 @@ import { useFamily } from "@/lib/family-store";
 import { useCachedResource } from "@/lib/use-cached-resource";
 import { api } from "@/lib/api";
 import { PortfolioClient } from "@/components/portfolio-client";
-import type { AssetOut, KidSummary, PortfolioOut } from "@/lib/types";
+import type { AssetOut, KidSummary, PortfolioOut, SavingsOverviewOut } from "@/lib/types";
 
 const CATALOG_TTL_MS = 10 * 60_000; // scheduler refreshes prices every ~5h
 const PORTFOLIO_TTL_MS = 15_000;
+const SAVINGS_TTL_MS = 15_000;
 
 /** Builds a stand-in portfolio from the `/home` kid summary so the header
  * (name, cash, invested total) renders instantly on navigation from Home.
@@ -24,6 +25,7 @@ function synthesizePortfolio(kidId: string, summary: KidSummary | undefined): Po
     kid_name: summary?.name ?? "",
     cash_available: String(cash),
     holdings_value: String(invested),
+    savings_value: "0",
     total_value: String(cash + invested),
     total_day_change_amount: "0",
     total_day_change_pct: null,
@@ -32,12 +34,14 @@ function synthesizePortfolio(kidId: string, summary: KidSummary | undefined): Po
   };
 }
 
+const EMPTY_SAVINGS: SavingsOverviewOut = { savings_value: "0", deposits: [], plans: [] };
+
 export function KidPortfolioScreen({
   kidId,
   initialTab,
 }: {
   kidId: string;
-  initialTab: "holdings" | "buy";
+  initialTab: "holdings" | "buy" | "save";
 }) {
   const { data: session } = useSession();
   const { home } = useFamily();
@@ -54,6 +58,11 @@ export function KidPortfolioScreen({
     () => api.get<AssetOut[]>("/catalog", token as string),
     { ttlMs: CATALOG_TTL_MS }
   );
+  const savingsRes = useCachedResource<SavingsOverviewOut>(
+    token ? `savings:${kidId}` : null,
+    () => api.get<SavingsOverviewOut>(`/kids/${kidId}/savings`, token as string),
+    { ttlMs: SAVINGS_TTL_MS }
+  );
 
   // Portfolio fetch failed and we have nothing cached — route to the
   // segment error boundary (matching the pre-instant-UX behavior of a
@@ -69,11 +78,13 @@ export function KidPortfolioScreen({
     <PortfolioClient
       kidId={kidId}
       portfolio={portfolio}
+      savings={savingsRes.data ?? EMPTY_SAVINGS}
       catalog={catalogRes.data ?? []}
       currency={home.base_currency}
       initialTab={initialTab}
       holdingsLoading={!portfolioRes.data}
       catalogLoading={!catalogRes.data}
+      savingsLoading={!savingsRes.data}
     />
   );
 }

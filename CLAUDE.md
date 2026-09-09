@@ -97,6 +97,220 @@ All gated on user action + the steps in `docs/cloud-run-migration.md`.
 Also not started: replacing the Yahoo price fetch (deliberately sequenced
 *after* this migration).
 
+## Status as of 2026-09-08 — savings plans (backend v1.8.0 / frontend v0.9.0)
+
+**Done, reviewed, tested, AND merged with `origin/master`'s "Instant UX"
+feature — the savings additions were reworked to fit that architecture
+(optimistic writes, client-side caches). On branch `savings-plans`.
+Push / merge to `master` is gated on explicit user confirmation per this
+project's rules — check whether that's happened before assuming it's live.**
+
+### Instant-UX adaptation (merge round, 2026-09-08)
+
+`origin/master` gained worker-1's Instant-UX feature (client `/home`
+store `lib/family-store.tsx`, SWR cache `lib/use-cached-resource.ts`,
+`ui/toast.tsx`, optimistic writes) while this branch was in progress.
+The savings feature now follows the same rules:
+
+- **Kid portfolio** (`kid-portfolio-screen.tsx`): savings is a
+  `useCachedResource("savings:{kidId}")` alongside master's
+  portfolio/catalog resources; `PortfolioClient` got `savings` +
+  `savingsLoading` props and row skeletons, on top of master's 2-tab
+  base (re-applied the 3-tab Portfolio/Invest/Save + "& Savings" header
+  + Savings section + Save tab).
+- **Deposit / withdraw** (`savings-deposit-sheet.tsx`,
+  `savings-deposit-client.tsx`): optimistic like `debt-sheet.tsx` —
+  `applyKidBalanceDelta(-amount)` / `(+value)`, close or navigate
+  immediately, background POST → `invalidateKid` + `refreshHome`,
+  `.catch` → rollback + `toast`. **`invalidateKid()` (in
+  `use-cached-resource.ts`) now also drops `savings:{kid}` /
+  `savings-deposit:{kid}:`** — add any new per-kid savings cache key to
+  that list.
+- **Settings hub + kind pages**: client components reading
+  `useCachedResource("savings-plans" / "savings-presets" /
+  "family-settings")`. `savings/[kind]/page.tsx` passes
+  `plansRes.mutate` / `.revalidate` into `SavingsKindForm`.
+- **`SavingsKindForm` toggle Save**: `pendingChanges()` snapshots the
+  staged diff **before** `optimisticApply()` mutates the plans cache
+  (the mutate would otherwise make the changes look already-applied and
+  skip the API calls). `sig`-prune keeps a still-pending selection if a
+  failed save rolls the cache back.
+- **Cash-out**: `cashOutOne()` → POST + `invalidateKid` per affected
+  kid + `refreshHome`. `confirmCashOut` keeps its sheet open with a
+  "Working…" state (no optimistic visible effect on the settings
+  screen); the delete `ConfirmSheet` closes immediately because the
+  optimistic row-removal is the feedback.
+- Failure surfacing: the settings page has an inline `error` slot
+  (`handleSave`/`handleCreate`/`confirmDelete` use it); the leftovers
+  sheet + closed cash-out sheet have none, so those `toast`.
+
+**Merge conflicts resolved:** `CLAUDE.md`, kid `page.tsx`,
+`settings/investing/page.tsx`, `portfolio-client.tsx`. Backend
+auto-merged — `PortfolioOut` carries both `savings_value` (this branch)
+and `prices_as_of` (master); the "Moved to savings" history label
+survived master's history-page rewrite. 127 backend tests pass;
+`build` + `lint` + `tsc` clean; full Playwright pass of the merged app
+(home → portfolio → optimistic deposit → optimistic withdraw → hub →
+settings toggle-save → leftovers sheet) with zero console errors.
+
+### What it is
+
+Parents define **savings plans** a kid can move cash into; the money
+compounds at a fixed monthly rate. One unified model — a plan is
+**flexible** (`lock_months == 0`, withdraw any time) or **locked**
+(`lock_months > 0`, no withdrawal until it matures, then keeps
+compounding at the same rate until withdrawn). Settings live under
+Settings → *Advanced investing & savings* → *Flexible savings* /
+*Locked savings* (two separate screens). The kid sees savings on their
+portfolio screen (now "Investments & **Savings**", tabs
+**Portfolio / Invest / Save**).
+
+### Key decisions (why it's shaped this way)
+
+- **One `savings_plans` model, not "flexible rate + locked plans"
+  separately** — a mid-design call by the user. The parent only
+  creates / deletes / switches plans on and off. Every `SavingsDeposit`
+  **snapshots** its plan's `plan_name` / `monthly_rate` / `lock_months`
+  at deposit time, so editing or deleting the `SavingsPlan` never
+  changes money already in it. `savings_deposits.plan_id` is
+  `ON DELETE SET NULL`; the snapshot columns drive all display + math.
+- **`savings_service` is stateless, exactly like `boost_service`** — a
+  deposit's value is `principal * (1 + rate/100) ** (elapsed_days /
+  DAYS_PER_MONTH)`, recomputed on every read, no accrued-interest
+  column, no cron job. Interest only ever grows (no down-ticks), so
+  it's a plain compounding curve, not a tick walk. `DAYS_PER_MONTH =
+  30.4375` (= 365.25/12; matches `boost_service`'s `HOURS_PER_MONTH`).
+- **Withdrawals are whole-deposit-only** (user's call) — closes the
+  deposit and pays principal + accrued interest to the cash ledger via
+  a `debt_transactions` row with the new **`is_savings`** flag (history
+  shows "Moved to savings" / "Savings payout").
+- **Recommended presets** (`savings_service.PRESET_PLANS`, code not
+  seeded): flexible "Flexible plan" 1%/mo; locked 1mo/1.5%, 3mo/2%,
+  6mo/2.5%, 12mo/3%. A parent switches one on with a checkbox → it
+  creates (or reactivates) a `SavingsPlan` row carrying `preset_key`.
+  Changing a preset constant here does **not** retro-change rows
+  already switched on.
+- **Settings pages are a staged form.** Checkboxes only stage; a
+  **sticky "Save changes" bar at the top** commits. If a save switches
+  **off** a plan *this save* left holding a deposit, `SavingsLeftoversSheet`
+  opens afterward with a per-kid breakdown and, per plan, *Cash out* /
+  *Switch back on*. A save that only turns plans **on** never pops that
+  sheet.
+- **Cash-out** (`POST /family/savings-plans/{id}/cash-out`) closes every
+  open deposit in one plan across all kids, back to their cash —
+  **overrides the maturity lock on locked deposits** (parent's own
+  money to release). Reachable from a switched-off plan card's "Cash out
+  these savings" button and from the leftovers sheet. There is no
+  page-wide "cash out everything" button (removed at user request).
+- **Parent confirms use `ConfirmSheet`** (amber in-app sheet, new
+  `--color-tint-brass` / `--color-brass-dark` tokens) not `window.confirm()`.
+  The kid-side withdraw still uses native `confirm()` — consistent with
+  the rest of the portfolio/kid surface (`handleSellEverything`).
+- **Hub status pills** per savings kind: green **Active** (a plan is on),
+  brass **Deactivated** (no plan on, whether or not any exist), red
+  **N still growing** (leftover deposits in a switched-off plan — redder
+  because there's real money at stake). All three tap to explain.
+- **`annual_rate` / `annualFromMonthly`** show the *compounded* yearly
+  equivalent next to every monthly rate (2%/mo ≈ 26.8%/yr, not 24%).
+  Backend `savings_service.annual_rate` and frontend `lib/format.ts`
+  must stay in sync.
+
+### Migrations
+
+- `0012_savings_plans` (`0011 → 0012`): `savings_plans`,
+  `savings_deposits`, `debt_transactions.is_savings` (`server_default
+  "false"` — the `is_investment` lesson).
+- `0013_savings_plan_preset_key` (`0012 → 0013`): `savings_plans.preset_key`.
+- Shared dev DB is on `0013`. Checked `alembic current` + every sibling
+  worktree's `versions/` before taking each number.
+
+### Files
+
+- Backend: `models/savings.py`, `schemas/savings.py`,
+  `services/savings_service.py`, `api/routes_savings.py` (registered in
+  `main.py`), `+is_savings` threaded through `debt_transaction` /
+  `debts_db_service` / `routes_debt` / `schemas/debt`,
+  `investing_service.get_portfolio` adds `savings_value` to `PortfolioOut`.
+- Frontend: `savings-kind-form.tsx` (the big one),
+  `savings-leftovers-sheet.tsx`, `savings-deposit-sheet.tsx`,
+  `savings-deposit-client.tsx`, `ui/confirm-sheet.tsx`,
+  `ui/plan-deposit-marker.tsx`, `ui/hub-savings-badges.tsx`,
+  `ui/savings-badge.tsx`; routes
+  `home/settings/investing/savings/[kind]/` and
+  `home/kids/[kidId]/savings/[depositId]/`; edits to
+  `settings/investing/page.tsx`, `settings-form.tsx`,
+  `portfolio-client.tsx`, `kids/[kidId]/page.tsx`,
+  `kids/[kidId]/history/page.tsx`, `lib/format.ts`, `lib/types.ts`,
+  `globals.css`.
+
+### Verified
+
+- Backend suite **127 passed** (was 101; +26 across
+  `test_savings_service.py` / `test_savings_plans.py`).
+- `npm run build` + `npm run lint` + `tsc --noEmit` clean.
+- Live-tested with Playwright against the dev server + synthetic test
+  family at every feedback round: create/toggle/delete plans, presets,
+  deposit into flexible + locked, per-plan cash-out (incl. locked
+  override), the staged-save + leftovers flow, deposit detail + kid
+  withdraw, the hub pills and their explanations. Zero console errors.
+
+### Known gaps / follow-ups (not bugs to fix now)
+
+1. **The home screen does not show savings.** A kid who moves $100
+   cash → savings shows $100 less cash on `/home` and the savings
+   appears nowhere there (only on their detail page: the "$X saved"
+   subline + Savings section). Fixing means adding `savings_value` to
+   `KidSummary` / `FamilyHome` + `get_family_home` + home rendering —
+   a real chunk with a UI decision (where on the kid card?). **This is
+   the #1 follow-up.**
+2. `POST .../savings/deposit` and `.../withdraw` re-fetch the full
+   deposit detail (incl. a 40-point chart series) after the mutation;
+   the frontend discards both responses. Minor wasted compute on a
+   rare action.
+3. Mixed-currency summation in `build_overview` / `savings_value` /
+   `plan_deposit_breakdown` if the scheduler hasn't cached an FX rate
+   for a deposit's currency — matches the existing `investing_service`
+   tolerance (it just uses the native amount). Real only right after a
+   family changes to a brand-new currency.
+4. `SavingsDepositSheet`'s pre-deposit "Locked until about <date>" uses
+   calendar-month math while the backend uses 30.4375-day math — off by
+   a day or two; copy says "about" and the detail page shows the
+   authoritative `matures_at`.
+
+### Non-obvious things the next session needs to know
+
+- **`plan_deposit_breakdown` must aggregate per kid, not per deposit.**
+  It returns one row per kid (deposits summed). A kid with two deposits
+  in the same plan → one row. The `SavingsLeftoversSheet` and the
+  cash-out `ConfirmSheet` both key their lists by `d.kid_id`; per-deposit
+  rows caused a React "two children with the same key" error.
+- **`savings-kind-form.tsx` staged-state reset** uses the
+  adjust-state-during-render pattern (`if (sig !== lastSig) { setLastSig;
+  setOverride({}) }`) — this is React's documented approach; do not
+  "fix" it into a `useEffect` (trips this project's lint rule anyway).
+- **`investing_service` imports `savings_service`** (for `savings_value`
+  in `get_portfolio`). `savings_service` imports `debts_db_service` /
+  `fx_service` only — no cycle. Keep it that way.
+- **Ghost-port bug recurred repeatedly this session.** The worktree's
+  backend port drifted 8098 → 8099 → 8100 chasing unkillable stale
+  listeners (`netstat` shows two PIDs `LISTEN`ing on one port; one
+  serves old code). `frontend/.env.local` currently points at **8100**.
+  If backend routes 404 or serve stale shapes, check `netstat` /
+  `Get-NetTCPConnection` for a ghost before assuming a code bug, and
+  move to a fresh port + restart both servers.
+
+### Iteration log (condensed — 10 feedback rounds + a merge)
+
+Split single screen → flexible/locked + presets → in-app confirm sheet
+→ per-plan cash-out (kind-level removed) → staged Save + post-save
+leftovers sheet → deposit-count marker on every plan + accurate copy →
+per-plan Cash-out button on off plans → hub Deactivated pill + redder
+"still growing" + scoped the save alert → React dup-key fix (breakdown
+per kid) → Deactivated pill shows with zero plans → **merge
+`origin/master` (Instant UX) + rework every savings write to be
+optimistic** (see the "Instant-UX adaptation" subsection above). Full
+detail is in git log for `savings-plans`.
+
 ## Current state / handoff (2026-09-07, end of `finish-feature` on `worker-1`)
 
 **What this branch does:** removes the "every click freezes the UI" problem

@@ -7,11 +7,20 @@ import { TickerBadge } from "@/components/ui/ticker-badge";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Money } from "@/components/ui/money";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SavingsDepositSheet } from "@/components/savings-deposit-sheet";
+import { SavingsKindBadge } from "@/components/ui/savings-badge";
 import { useFamily } from "@/lib/family-store";
 import { invalidateKid } from "@/lib/use-cached-resource";
 import { api, ApiError } from "@/lib/api";
 import { formatMoney, formatPct, trimUnits } from "@/lib/format";
-import type { AssetOut, PortfolioOut } from "@/lib/types";
+import type {
+  AssetOut,
+  DepositablePlanOut,
+  PortfolioOut,
+  SavingsOverviewOut,
+} from "@/lib/types";
+
+type Tab = "holdings" | "buy" | "save";
 
 function RowSkeletons() {
   return (
@@ -32,35 +41,59 @@ function RowSkeletons() {
   );
 }
 
+function unlockLabel(deposit: SavingsOverviewOut["deposits"][number]): string {
+  if (!deposit.is_locked) return "Flexible";
+  if (deposit.is_matured) return "Unlocked";
+  if (!deposit.matures_at) return "Locked";
+  const days = Math.max(1, Math.ceil((new Date(deposit.matures_at).getTime() - Date.now()) / 86_400_000));
+  if (days < 31) return `Locked · ${days} day${days === 1 ? "" : "s"} left`;
+  const months = Math.round(days / 30.44);
+  return `Locked · ${months} month${months === 1 ? "" : "s"} left`;
+}
+
+function planTypeLine(plan: DepositablePlanOut): string {
+  const rate = `${Number(plan.monthly_rate).toFixed(1)}%/mo · ≈ ${Number(plan.annual_rate).toFixed(1)}%/yr`;
+  if (plan.lock_months <= 0) return `Flexible · ${rate}`;
+  return `Locked ${plan.lock_months} mo · ${rate}`;
+}
+
 export function PortfolioClient({
   kidId,
   portfolio,
+  savings,
   catalog,
   currency,
   initialTab,
   holdingsLoading = false,
   catalogLoading = false,
+  savingsLoading = false,
 }: {
   kidId: string;
   portfolio: PortfolioOut;
+  savings: SavingsOverviewOut;
   catalog: AssetOut[];
   currency: string;
-  initialTab: "holdings" | "buy";
+  initialTab: Tab;
   holdingsLoading?: boolean;
   catalogLoading?: boolean;
+  savingsLoading?: boolean;
 }) {
   const { data: session } = useSession();
   const { refreshHome } = useFamily();
-  const [tab, setTab] = useState<"holdings" | "buy">(initialTab);
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [sellingAll, setSellingAll] = useState(false);
   const [sellAllError, setSellAllError] = useState<string | null>(null);
+  const [depositPlan, setDepositPlan] = useState<DepositablePlanOut | null>(null);
 
   const dayChangePct = formatPct(portfolio.total_day_change_pct);
   const isPositive = Number(portfolio.total_day_change_amount) >= 0;
+  const hasInvestments = portfolio.holdings.length > 0;
+  const hasSavings = savings.deposits.length > 0;
+  const savingsValue = Number(savings.savings_value);
 
   async function handleSellEverything() {
     if (!session?.backendToken) return;
-    if (!confirm(`Sell everything ${portfolio.kid_name} owns? This can't be undone.`)) return;
+    if (!confirm(`Sell every stock ${portfolio.kid_name} owns? Savings aren't affected. This can't be undone.`)) return;
     setSellingAll(true);
     setSellAllError(null);
     try {
@@ -86,7 +119,7 @@ export function PortfolioClient({
             ‹
           </Link>
           <h1 className="font-serif font-semibold text-[19px] text-emerald-dark">
-            {portfolio.kid_name}&apos;s Investments
+            {portfolio.kid_name}&apos;s Investments &amp; Savings
           </h1>
         </div>
         <Link href={`/home/kids/${kidId}/investments-history`} className="text-[12.5px] font-semibold text-emerald">
@@ -99,13 +132,18 @@ export function PortfolioClient({
         <div className="font-serif font-semibold text-[32px] text-emerald">
           <Money amount={portfolio.cash_available} currency={currency} />
         </div>
-        <div className="flex items-baseline gap-1.5 mt-1">
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 mt-1">
           <span className="text-[14px] font-medium text-muted-strong">
             {formatMoney(portfolio.holdings_value, currency)} invested
           </span>
           {dayChangePct && (
             <span className={`text-[13px] font-semibold ${isPositive ? "text-positive" : "text-negative"}`}>
               {dayChangePct}
+            </span>
+          )}
+          {savingsValue > 0 && (
+            <span className="text-[14px] font-medium text-muted-strong">
+              · {formatMoney(savings.savings_value, currency)} saved
             </span>
           )}
         </div>
@@ -116,27 +154,53 @@ export function PortfolioClient({
           value={tab}
           onChange={setTab}
           options={[
-            { value: "holdings", label: "My Investments" },
-            { value: "buy", label: "Buy" },
+            { value: "holdings", label: "Portfolio" },
+            { value: "buy", label: "Invest" },
+            { value: "save", label: "Save" },
           ]}
         />
       </div>
 
       <div className="flex-1 px-5 pt-2 pb-6 flex flex-col gap-2.5">
-        {tab === "holdings" ? (
+        {tab === "holdings" && (
           <>
+            <h2 className="font-serif font-semibold text-[15px] text-emerald-dark pt-1">Savings</h2>
+            {savings.deposits.map((d) => {
+              const interest = Number(d.accrued_interest);
+              return (
+                <Link
+                  key={d.deposit_id}
+                  href={`/home/kids/${kidId}/savings/${d.deposit_id}`}
+                  className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex items-center justify-between"
+                >
+                  <div className="flex flex-col items-start gap-1">
+                    <div className="font-semibold text-[15px] text-emerald-dark">{d.plan_name}</div>
+                    <SavingsKindBadge locked={d.is_locked && !d.is_matured} label={unlockLabel(d)} />
+                  </div>
+                  <div className="text-right">
+                    <div className="font-semibold text-[15px] text-emerald-dark">
+                      {formatMoney(d.current_value, currency)}
+                    </div>
+                    {interest > 0 && (
+                      <div className="font-semibold text-[12.5px] text-positive">
+                        +{formatMoney(interest, currency)} interest
+                      </div>
+                    )}
+                  </div>
+                </Link>
+              );
+            })}
+            {!hasSavings && savingsLoading && <RowSkeletons />}
+            {!hasSavings && !savingsLoading && (
+              <p className="text-[13px] text-muted">
+                Nothing saved yet — switch to Save to put some cash aside.
+              </p>
+            )}
+
+            <h2 className="font-serif font-semibold text-[15px] text-emerald-dark pt-3">Investments</h2>
             {portfolio.holdings.map((h) => {
-              // "Since you bought it" — how the position has actually
-              // done — rather than today's daily wiggle, which is what
-              // the catalog/Buy tab shows instead.
               const pct = formatPct(h.since_purchase_pct);
               const positive = Number(h.since_purchase_pct ?? 0) >= 0;
-              // A lot goes to its own detail page (chart since purchase +
-              // sell) — never the Buy screen, which is for buying, not for
-              // viewing/selling something already owned. Only a
-              // pre-lot legacy avg-cost holding (no lot_id) still uses the
-              // Buy page's "you own this" banner, since it has no
-              // dedicated detail page of its own.
               const href = h.lot_id
                 ? `/home/kids/${kidId}/lots/${h.lot_id}`
                 : `/home/kids/${kidId}/buy/${h.symbol}?from=holdings`;
@@ -174,15 +238,14 @@ export function PortfolioClient({
               );
             })}
 
-            {portfolio.holdings.length === 0 && holdingsLoading && <RowSkeletons />}
-
-            {portfolio.holdings.length === 0 && !holdingsLoading && (
-              <p className="text-center text-[13px] text-muted pt-4">
-                No investments yet — switch to Buy to get started.
+            {!hasInvestments && holdingsLoading && <RowSkeletons />}
+            {!hasInvestments && !holdingsLoading && (
+              <p className="text-[13px] text-muted">
+                No investments yet — switch to Invest to get started.
               </p>
             )}
 
-            {portfolio.holdings.length > 0 && (
+            {hasInvestments && (
               <>
                 <button
                   type="button"
@@ -190,33 +253,95 @@ export function PortfolioClient({
                   onClick={handleSellEverything}
                   className="mt-1 text-center min-h-11 py-[13px] rounded-xl text-[14px] font-semibold border border-negative text-negative cursor-pointer disabled:opacity-50"
                 >
-                  {sellingAll ? "Selling…" : `Sell everything for ${formatMoney(portfolio.holdings_value, currency)}`}
+                  {sellingAll
+                    ? "Selling…"
+                    : `Sell all investments for ${formatMoney(portfolio.holdings_value, currency)}`}
                 </button>
                 {sellAllError && <p className="text-[13px] text-negative -mt-1">{sellAllError}</p>}
               </>
             )}
           </>
-        ) : catalog.length === 0 && catalogLoading ? (
-          <RowSkeletons />
-        ) : (
+        )}
+
+        {tab === "buy" &&
+          (catalog.length === 0 && catalogLoading ? (
+            <RowSkeletons />
+          ) : (
+            <>
+              <CatalogSection
+                title="Baskets"
+                subtitle="A slice of many companies at once — steadier, simpler."
+                assets={catalog.filter((a) => a.kind === "basket")}
+                kidId={kidId}
+                currency={currency}
+              />
+              <CatalogSection
+                title="Individual stocks"
+                subtitle="One company at a time — more ups and downs."
+                assets={catalog.filter((a) => a.kind === "stock")}
+                kidId={kidId}
+                currency={currency}
+              />
+            </>
+          ))}
+
+        {tab === "save" && (
           <>
-            <CatalogSection
-              title="Baskets"
-              subtitle="A slice of many companies at once — steadier, simpler."
-              assets={catalog.filter((a) => a.kind === "basket")}
-              kidId={kidId}
-              currency={currency}
-            />
-            <CatalogSection
-              title="Individual stocks"
-              subtitle="One company at a time — more ups and downs."
-              assets={catalog.filter((a) => a.kind === "stock")}
-              kidId={kidId}
-              currency={currency}
-            />
+            <p className="text-[13px] text-muted leading-relaxed pt-1">
+              Move cash into a savings plan and it earns interest every day. Flexible plans come out
+              any time; locked plans stay put until their term is up.
+            </p>
+            {(["flexible", "locked"] as const).map((group) => {
+              const groupPlans = savings.plans.filter((p) =>
+                group === "flexible" ? p.lock_months === 0 : p.lock_months > 0,
+              );
+              if (groupPlans.length === 0) return null;
+              return (
+                <div key={group} className="flex flex-col gap-2.5">
+                  <h2 className="font-serif font-semibold text-[15px] text-emerald-dark pt-2">
+                    {group === "flexible" ? "Flexible" : "Locked"}
+                  </h2>
+                  {groupPlans.map((plan) => (
+                    <div
+                      key={plan.id}
+                      className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex items-center justify-between gap-3"
+                    >
+                      <div>
+                        <div className="font-semibold text-[15px] text-emerald-dark">{plan.name}</div>
+                        <div className="text-[12.5px] text-muted">{planTypeLine(plan)}</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setDepositPlan(plan)}
+                        className="shrink-0 bg-emerald text-white min-h-11 px-4 rounded-xl text-[13px] font-semibold cursor-pointer"
+                      >
+                        Put money in
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+            {savings.plans.length === 0 && savingsLoading && <RowSkeletons />}
+            {savings.plans.length === 0 && !savingsLoading && (
+              <p className="text-center text-[13px] text-muted pt-4">
+                No savings plans yet — a parent can add them under Settings › Advanced investing &amp;
+                savings.
+              </p>
+            )}
           </>
         )}
       </div>
+
+      {depositPlan && (
+        <SavingsDepositSheet
+          kidId={kidId}
+          plan={depositPlan}
+          cashAvailable={Number(portfolio.cash_available)}
+          currency={currency}
+          onClose={() => setDepositPlan(null)}
+        />
+      )}
     </div>
   );
 }
