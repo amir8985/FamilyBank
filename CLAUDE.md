@@ -32,6 +32,37 @@ frontend/   Next.js 16 (App Router) + Tailwind v4 — see frontend/README.md
 
 ## Current status (as of 2026-09-10)
 
+**Allowance (דמי כיס) — merged to `master`** (backend `1.10.0`, frontend
+`0.11.0`). Migration **0016** (`allowances` table + `debt_transactions.
+is_allowance`). Parents set a recurring weekly/monthly cash top-up per
+kid (or "same for everyone"); it lands in the kid's normal cash balance
+on schedule as an `is_allowance`-flagged ledger credit. Full design +
+decisions in the "Allowance (דמי כיס)" section below. Key things for the
+next session:
+- **No cron.** Payouts settle lazily — inline when anyone opens an
+  allowance screen (kid home, parent settings landing + allowance
+  screen), and once per price-refresh cycle (`jobs.run_refresh` →
+  `allowance_service.settle_all_due`, disabled in tests via
+  `set_sweep_enabled`). A payout can therefore land a few hours after
+  midnight-on-payday; it's always dated correctly. Accepted by the user.
+- **GET side effects**: `GET /kids/{id}/allowance` and
+  `GET /family/allowances` both settle-then-commit. The Settings landing
+  now calls `/family/allowances` for its "Not set up" pill, so opening
+  Settings can trigger a payout. Harmless (the money was due regardless,
+  settle is idempotent) but noted — if it ever bites, add a no-settle
+  variant for the pill check.
+- **No pause.** An allowance is created or removed (Turn off = DELETE).
+  `is_active` was dropped entirely (column, schema, guards) after the
+  user found on/paused/off confusing.
+- **`allowances.payday`** has a DB CHECK (`0..28`); `allowance_service.
+  _advance`/`first_run_at` rely on payday being a day every month has.
+- **DDL-churn footgun hit this session**: `alembic downgrade` on the
+  shared Neon *pooler* dev DB (to re-edit not-yet-merged 0016) poisoned
+  PgBouncer's cached statement plans → transient
+  `InvalidCachedStatementError` on every `allowances` query for ~5 min.
+  Self-healed. Next time: edit the migration file + `ALTER TABLE` to
+  match, don't downgrade/upgrade the pooled endpoint.
+
 **`kid-pages` is merged to `master`** (backend `1.9.0`, frontend `0.10.0`
 at merge). The whole "Kid login + kid-facing app" section below is now
 live, not in-flight.
@@ -88,6 +119,9 @@ the dev server + synthetic test family (`family_id
    silent thereafter.
 7. **Server-version display** (2026-09-10): `/health` returns the API
    version; Settings footer reveals it under the frontend version on tap.
+8. **Allowance (דמי כיס)** (branch `kid-allowance`, 2026-09-10, *not yet
+   merged*): recurring weekly/monthly cash top-up per kid — see its
+   section below.
 
 ### Savings plans — what it is and key decisions
 
@@ -281,6 +315,86 @@ Check `netstat`/`.env` for ground truth before trusting this.
 4. Bare `/kid` with 2+ sessions and no `kid_last` cookie picks the first
    arbitrarily. Fine in practice — each kid uses their own
    `/kid/kids/<handle>` link and `kid_last` is set on every home load.
+
+### Allowance (דמי כיס) — what it is and key decisions
+
+Migration **0016** (`allowances` + `debt_transactions.is_allowance`).
+Parent sets a recurring cash top-up per kid (or the same for all kids at
+once); it lands in the kid's normal cash balance on schedule.
+
+- **One `allowances` row per kid** (`kid_id` unique) — a kid has an
+  allowance or doesn't; editing replaces the row, "Turn off" DELETEs it.
+  **No pause / no `is_active`** — the user found on/paused/off confusing,
+  so the concept was removed entirely (column, schema field, guards).
+  Fields: `amount` + `currency` (family currency at set time, converted at
+  payout like `SavingsDeposit.currency` — the currency-change path needs
+  *nothing* allowance-specific), `cadence` (`weekly`|`monthly`), `payday`
+  (weekly 0–6 Mon..Sun = `datetime.weekday()`; monthly 1–28; DB CHECK
+  `0..28`), `next_run_at`, `last_paid_at`.
+- **NOT a wallet / not stateless-recompute.** Unlike savings/boost, each
+  payout is a real one-time ledger write: a `debt_transactions` ADD row
+  flagged **`is_allowance`** (migration adds the column,
+  `server_default false`), note `"Weekly allowance"` / `"Monthly
+  allowance"`. So it shows in the balance everywhere + the existing
+  history screen (label "Allowance").
+- **Lazy settle, no per-payment cron.** `allowance_service.settle_due`
+  pays every period whose `next_run_at` has passed (capped at
+  `MAX_CATCHUP_PERIODS = 60` — a long-closed app fast-forwards instead of
+  dumping back-pay) and advances the clock. Called: inline (+commit) from
+  `GET /kids/{id}/allowance` (kid app home + parent settings both load
+  it) and `GET /family/allowances`; and swept once per price-refresh
+  cycle by `jobs.run_refresh` → `settle_all_due()` (own session, own
+  commit — **disabled in tests** via `set_sweep_enabled` + the conftest
+  autouse fixture, same as the price staleness fallback). A new allowance
+  never pays on creation — `first_run_at` is the next payday strictly in
+  the future.
+- **Concurrency**: `_settle` takes a per-kid
+  `pg_try_advisory_xact_lock(_LOCK_NAMESPACE, kid_low_31_bits)` — a second
+  racing settle (inline vs. sweep) returns 0 instead of double-paying.
+  Transaction-scoped so it auto-releases on commit/rollback (tests too).
+  `build_family_views` calls `_settle` per kid in one request txn, so it
+  briefly holds up to N per-kid locks — fine at family scale.
+- **Endpoints**: `GET/PUT/DELETE /kids/{id}/allowance` (PUT/DELETE
+  `require_parent`; GET is kid-or-parent via `get_kid_and_family`),
+  `GET /family/allowances` (batched — `build_family_views`: one query for
+  all allowances, one windowed query for all recent payouts, then settle
+  per kid; not the per-kid N+1 the perf section warns against),
+  `POST /family/allowances` (bulk = apply one `AllowanceUpsert` to every
+  kid, replacing any that exist). A plain amount edit keeps the existing
+  `next_run_at`; changing cadence/payday re-anchors it.
+- **Frontend**: parent screen `/home/settings/allowance`
+  (`allowance-settings-form.tsx`) — linked from a top-level Settings card
+  (above "Advanced investing & savings", it's a core feature). Layout
+  after user feedback: **"Active allowances"** at the top (one card per
+  kid who has one: summary + Edit + Turn off), then **kids without one**
+  (a "Set up ›" row → `AllowanceEditorSheet` bottom sheet), then a
+  collapsed **"Same for every kid"** form. Bulk apply over kids who
+  already have one pops a `ConfirmSheet` ("Replace existing?"). Kid sees a
+  **static** "Your allowance" info card on `kid-home.tsx` (amount +
+  schedule + last/next payday) — NOT a link (tapping it used to navigate
+  to history, which confused the user; "My balance history" button is
+  right below). `invalidateKid` drops `allowance:<id>`; `api.put` added.
+- **Settings landing** (`settings-form.tsx`): the Allowance and "Advanced
+  investing & savings" cards show an amber **"Not set up"** pill
+  (`NotSetUpPill`) *only* when nothing is configured — allowance: no kid
+  has one; investing: `boost_buffer_rate` null AND no active savings plan.
+  No "Active" badge once configured (user found it noisy) — the pill just
+  disappears. Adds `family-allowances` / `family-settings` /
+  `savings-plans` cached fetches to that screen.
+
+**Known gaps (not bugs):**
+1. `recent_payments` in the allowance view labels each payout with the
+   *current* family currency (same tolerance as the non-adjustment rows
+   in `routes_debt._to_out` — a currency change mislabels older allowance
+   payouts until you open the history screen, which reconstructs them).
+2. Monthly payday capped at 28 (so every month has one) — no "last day
+   of month" option.
+3. No "pay now / catch up now" button, and no pause — settling is
+   time-driven only, and turning an allowance off deletes its settings.
+4. `/home` doesn't settle inline; a payout shows on the parent's home
+   after the next refresh sweep or when they open an allowance screen
+   (the `/home` poll then reconciles). Acceptable — allowance isn't
+   second-critical.
 
 ### Instant UX (client-side store + optimistic writes)
 
@@ -499,6 +613,14 @@ Every worktree needs its own `backend/.env`/`frontend/.env.local`
   case, not a skip-wrapping no-op (see `app/core/db.py`).
 - Neon's pooled endpoint + `pool_pre_ping=True` roughly doubles latency
   (extra round-trip per request) — use `pool_recycle` instead.
+- **Don't `alembic downgrade`/re-`upgrade` a not-yet-merged migration on
+  the shared Neon *pooler* dev DB.** Dropping + recreating a table or
+  enum type changes its OID; PgBouncer's pooled backends keep stale
+  cached statement plans and every query on that object throws
+  `InvalidCachedStatementError` / `NotSupportedError` for ~5 min
+  (self-heals as connections cycle). To revise an unshipped migration:
+  edit the migration file, then `ALTER TABLE` the dev DB by hand to
+  match its new end state — never a full down/up on the pooled endpoint.
 - Global rarely-changing reference data (price/FX cache) should be
   cached in-process (`investing_service.load_price_context`), cleared on
   scheduler refresh + a TTL safety net. **Any new module-level cache

@@ -125,6 +125,7 @@ async def record_transaction(
     is_adjustment: bool = False,
     is_investment: bool = False,
     is_savings: bool = False,
+    is_allowance: bool = False,
     from_currency: str | None = None,
     to_currency: str | None = None,
 ) -> DebtTransaction:
@@ -136,6 +137,7 @@ async def record_transaction(
         is_adjustment=is_adjustment,
         is_investment=is_investment,
         is_savings=is_savings,
+        is_allowance=is_allowance,
         from_currency=from_currency,
         to_currency=to_currency,
     )

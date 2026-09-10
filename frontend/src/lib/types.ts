@@ -54,6 +54,7 @@ export type DebtTransactionOut = {
   is_adjustment: boolean;
   is_investment: boolean;
   is_savings: boolean;
+  is_allowance: boolean;
   currency: string;
   previous_currency: string;
   balance_before: string;
@@ -199,6 +200,32 @@ export type PortfolioOut = {
   // Family-wide monthly boost rate (%), or null when boost is off — lets
   // the buy screen preview a boosted lot without a /family/settings call.
   boost_buffer_rate: string | null;
+};
+
+export type AllowanceCadence = "weekly" | "monthly";
+
+export type AllowancePaymentOut = {
+  amount: string;
+  currency: string;
+  paid_at: string;
+};
+
+export type AllowanceOut = {
+  kid_id: string;
+  kid_name: string;
+  configured: boolean;
+  amount: string | null;
+  currency: string | null;
+  cadence: AllowanceCadence | null;
+  payday: number | null;
+  next_payday: string | null;
+  last_paid_at: string | null;
+  recent_payments: AllowancePaymentOut[];
+};
+
+export type FamilyAllowancesOut = {
+  base_currency: string;
+  kids: AllowanceOut[];
 };
 
 export type KidMe = {

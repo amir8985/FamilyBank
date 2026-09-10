@@ -8,10 +8,23 @@ import { AddKidSheet } from "@/components/add-kid-sheet";
 import { AttachChildSheet } from "@/components/attach-child-sheet";
 import { CurrencyChangeSheet } from "@/components/currency-change-sheet";
 import { useFamily, resetClientCaches } from "@/lib/family-store";
+import { useCachedResource } from "@/lib/use-cached-resource";
 import { useToast } from "@/components/ui/toast";
 import { api, ApiError } from "@/lib/api";
 import { SUPPORTED_CURRENCIES } from "@/lib/currencies";
-import type { KidSummary } from "@/lib/types";
+import type { FamilyAllowancesOut, FamilySettings, KidSummary, SavingsPlanOut } from "@/lib/types";
+
+// Only flags the "nothing here yet" case — a quiet nudge to open the
+// section. Once something is configured the pill just disappears (no
+// "Active" badge; the user found that noisy).
+function NotSetUpPill({ configured }: { configured: boolean | null }) {
+  if (configured !== false) return null;
+  return (
+    <span className="text-[10px] font-semibold rounded-full px-1.5 py-0.5 text-brass-dark bg-tint-brass shrink-0">
+      Not set up
+    </span>
+  );
+}
 
 export function SettingsForm() {
   const { data: session } = useSession();
@@ -19,6 +32,29 @@ export function SettingsForm() {
   const toast = useToast();
   const currentCurrency = home.base_currency;
   const kids = home.kids;
+  const token = session?.backendToken ?? null;
+
+  const { data: allowances } = useCachedResource<FamilyAllowancesOut>(
+    token ? "family-allowances" : null,
+    () => api.get<FamilyAllowancesOut>("/family/allowances", token as string),
+    { ttlMs: 60_000 }
+  );
+  const { data: familySettings } = useCachedResource<FamilySettings>(
+    token ? "family-settings" : null,
+    () => api.get<FamilySettings>("/family/settings", token as string),
+    { ttlMs: 5 * 60_000 }
+  );
+  const { data: savingsPlans } = useCachedResource<SavingsPlanOut[]>(
+    token ? "savings-plans" : null,
+    () => api.get<SavingsPlanOut[]>("/family/savings-plans", token as string),
+    { ttlMs: 60_000 }
+  );
+
+  const allowanceOn = allowances ? allowances.kids.some((k) => k.configured) : null;
+  const investingOn =
+    familySettings && savingsPlans
+      ? familySettings.boost_buffer_rate !== null || savingsPlans.some((p) => p.is_active)
+      : null;
 
   const [currency, setCurrency] = useState(currentCurrency);
   const [changeTarget, setChangeTarget] = useState<string | null>(null);
@@ -73,13 +109,33 @@ export function SettingsForm() {
       </label>
 
       <Link
-        href="/home/settings/investing"
-        className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex items-center justify-between"
+        href="/home/settings/allowance"
+        className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex items-center justify-between gap-2"
       >
-        <span className="font-semibold text-[14.5px] text-emerald-dark">
-          Advanced investing &amp; savings settings
+        <span className="flex flex-col min-w-0">
+          <span className="font-semibold text-[14.5px] text-emerald-dark">Allowance</span>
+          <span className="text-[12px] text-muted">Recurring pocket money, weekly or monthly</span>
         </span>
-        <span className="text-emerald text-lg">›</span>
+        <span className="flex items-center gap-2 shrink-0">
+          <NotSetUpPill configured={allowanceOn} />
+          <span className="text-emerald text-lg">›</span>
+        </span>
+      </Link>
+
+      <Link
+        href="/home/settings/investing"
+        className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex items-center justify-between gap-2"
+      >
+        <span className="flex flex-col min-w-0">
+          <span className="font-semibold text-[14.5px] text-emerald-dark">
+            Advanced investing &amp; savings
+          </span>
+          <span className="text-[12px] text-muted">Stock boost and savings plans</span>
+        </span>
+        <span className="flex items-center gap-2 shrink-0">
+          <NotSetUpPill configured={investingOn} />
+          <span className="text-emerald text-lg">›</span>
+        </span>
       </Link>
 
       <div className="flex flex-col gap-2.5">

@@ -1,3 +1,4 @@
+from app.models.allowance import Allowance, AllowanceCadence
 from app.models.catalog import AssetCatalog, FxRateCache, PriceCache, PriceTick
 from app.models.debt_transaction import DebtTransaction, DebtTransactionType
 from app.models.family import Family
@@ -13,6 +14,8 @@ from app.models.savings import SavingsDeposit, SavingsPlan
 from app.models.user import User
 
 __all__ = [
+    "Allowance",
+    "AllowanceCadence",
     "AssetCatalog",
     "FxRateCache",
     "PriceCache",

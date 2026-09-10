@@ -97,6 +97,39 @@ export function formatDateTime(iso: string): string {
   });
 }
 
+export function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+export const WEEKDAYS = [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
+];
+
+/** Ordinal suffix for a day-of-month, e.g. 1 → "st", 22 → "nd". */
+export function ordinal(n: number): string {
+  if (n % 10 === 1 && n !== 11) return "st";
+  if (n % 10 === 2 && n !== 12) return "nd";
+  if (n % 10 === 3 && n !== 13) return "rd";
+  return "th";
+}
+
+/** Human label for an allowance schedule, e.g. "every Monday" or
+ * "on the 1st of the month". `payday` is 0–6 for weekly, 1–28 for monthly. */
+export function allowanceScheduleLabel(cadence: "weekly" | "monthly", payday: number): string {
+  if (cadence === "weekly") return `every ${WEEKDAYS[payday] ?? "week"}`;
+  return `on the ${payday}${ordinal(payday)} of each month`;
+}
+
 export function initial(name: string): string {
   return name.trim().charAt(0).toUpperCase();
 }
