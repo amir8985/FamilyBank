@@ -23,6 +23,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.core.db import SessionLocal
 from app.models.allowance import Allowance, AllowanceCadence
@@ -191,26 +192,21 @@ async def _pay_once(
     return True
 
 
-async def settle_due(
-    session: AsyncSession, kid: Kid, family_currency: str, now: datetime | None = None
+async def _settle(
+    session: AsyncSession, allowance: Allowance, family_currency: str, now: datetime
 ) -> int:
-    """Pay out every period that's come due for one kid. Returns the
-    number of payouts made. Caller commits.
+    """Pay out every period that's come due for one already-loaded
+    allowance. Returns the number of payouts made. Caller commits.
 
     A per-kid advisory lock means a second concurrent settle for the same
     kid backs off (returns 0) instead of double-paying — the two callers
     that race are the inline settle on a read and the refresh-cycle sweep.
     """
-    allowance = await get_allowance(session, kid.id)
-    if allowance is None or not allowance.is_active:
-        return 0
-
-    now = now or datetime.now(timezone.utc)
-    if allowance.next_run_at > now:
+    if not allowance.is_active or allowance.next_run_at > now:
         return 0
 
     got_lock = await session.scalar(
-        select(func.pg_try_advisory_xact_lock(_LOCK_NAMESPACE, _kid_lock_key(kid.id)))
+        select(func.pg_try_advisory_xact_lock(_LOCK_NAMESPACE, _kid_lock_key(allowance.kid_id)))
     )
     if not got_lock:
         return 0
@@ -237,7 +233,7 @@ async def settle_due(
         allowance.next_run_at = first_run_at(now, allowance.cadence, allowance.payday)
         logger.warning(
             "Allowance for kid %s hit the %d-period catch-up cap — fast-forwarded to %s",
-            kid.id,
+            allowance.kid_id,
             MAX_CATCHUP_PERIODS,
             allowance.next_run_at.isoformat(),
         )
@@ -246,30 +242,54 @@ async def settle_due(
     return paid
 
 
-async def recent_payments(session: AsyncSession, kid_id: uuid.UUID) -> list[DebtTransaction]:
-    rows = await session.scalars(
-        select(DebtTransaction)
-        .where(DebtTransaction.kid_id == kid_id, DebtTransaction.is_allowance)
-        .order_by(DebtTransaction.created_at.desc())
-        .limit(RECENT_PAYMENTS_LIMIT)
-    )
-    return list(rows)
-
-
-async def build_view(session: AsyncSession, kid: Kid, family: Family) -> dict:
-    """Settle anything due, then assemble the kid's allowance summary +
-    recent payouts. Caller commits (settle may have written rows)."""
-    await settle_due(session, kid, family.base_currency)
-
+async def settle_due(
+    session: AsyncSession, kid: Kid, family_currency: str, now: datetime | None = None
+) -> int:
+    """Load one kid's allowance and settle anything due. Caller commits."""
     allowance = await get_allowance(session, kid.id)
-    payments = await recent_payments(session, kid.id)
+    if allowance is None:
+        return 0
+    return await _settle(session, allowance, family_currency, now or datetime.now(timezone.utc))
+
+
+async def _recent_payments_by_kid(
+    session: AsyncSession, kid_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[DebtTransaction]]:
+    """Last RECENT_PAYMENTS_LIMIT allowance payouts for each kid, in one
+    query (a per-kid window) instead of one query per kid."""
+    if not kid_ids:
+        return {}
+    rn = func.row_number().over(
+        partition_by=DebtTransaction.kid_id,
+        order_by=DebtTransaction.created_at.desc(),
+    ).label("rn")
+    ranked = (
+        select(DebtTransaction, rn)
+        .where(DebtTransaction.kid_id.in_(kid_ids), DebtTransaction.is_allowance)
+        .subquery()
+    )
+    ranked_txn = aliased(DebtTransaction, ranked)
+    rows = await session.scalars(
+        select(ranked_txn)
+        .where(ranked.c.rn <= RECENT_PAYMENTS_LIMIT)
+        .order_by(ranked.c.created_at.desc())
+    )
+    out: dict[uuid.UUID, list[DebtTransaction]] = {kid_id: [] for kid_id in kid_ids}
+    for row in rows:
+        out[row.kid_id].append(row)
+    return out
+
+
+def _view_dict(
+    kid: Kid, allowance: Allowance | None, payments: list[DebtTransaction], family_currency: str
+) -> dict:
     view: dict = {
         "kid_id": kid.id,
         "kid_name": kid.name,
         "configured": allowance is not None,
         "is_active": bool(allowance and allowance.is_active),
         "recent_payments": [
-            {"amount": p.amount, "currency": family.base_currency, "paid_at": p.created_at}
+            {"amount": p.amount, "currency": family_currency, "paid_at": p.created_at}
             for p in payments
         ],
     }
@@ -283,6 +303,38 @@ async def build_view(session: AsyncSession, kid: Kid, family: Family) -> dict:
             last_paid_at=allowance.last_paid_at,
         )
     return view
+
+
+async def build_view(session: AsyncSession, kid: Kid, family: Family) -> dict:
+    """Settle anything due, then assemble one kid's allowance summary +
+    recent payouts. Caller commits (settle may have written rows)."""
+    allowance = await get_allowance(session, kid.id)
+    if allowance is not None:
+        await _settle(session, allowance, family.base_currency, datetime.now(timezone.utc))
+    payments = (await _recent_payments_by_kid(session, [kid.id]))[kid.id]
+    return _view_dict(kid, allowance, payments, family.base_currency)
+
+
+async def build_family_views(session: AsyncSession, family: Family, kids: list[Kid]) -> list[dict]:
+    """Same as build_view for every kid in the family, but batched — two
+    queries (all allowances, all recent payouts) plus the settle work,
+    not ~3 sequential round-trips per kid (the Neon-latency N+1 pattern
+    CLAUDE.md's perf section warns against)."""
+    kid_ids = [k.id for k in kids]
+    allowances = {
+        a.kid_id: a
+        for a in await session.scalars(select(Allowance).where(Allowance.kid_id.in_(kid_ids)))
+    }
+    now = datetime.now(timezone.utc)
+    for kid in kids:
+        allowance = allowances.get(kid.id)
+        if allowance is not None:
+            await _settle(session, allowance, family.base_currency, now)
+    payments = await _recent_payments_by_kid(session, kid_ids)
+    return [
+        _view_dict(kid, allowances.get(kid.id), payments.get(kid.id, []), family.base_currency)
+        for kid in kids
+    ]
 
 
 _sweep_enabled = True
@@ -308,23 +360,24 @@ async def settle_all_due() -> int:
 
     total = 0
     async with SessionLocal() as session:
+        now = datetime.now(timezone.utc)
         rows = await session.execute(
-            select(Kid, Family)
+            select(Allowance, Family.base_currency)
+            .join(Kid, Kid.id == Allowance.kid_id)
             .join(Family, Family.id == Kid.family_id)
-            .join(Allowance, Allowance.kid_id == Kid.id)
-            .where(Allowance.is_active, Allowance.next_run_at <= datetime.now(timezone.utc))
+            .where(Allowance.is_active, Allowance.next_run_at <= now)
         )
-        pairs = rows.all()
-        for kid, family in pairs:
+        due = rows.all()
+        for allowance, base_currency in due:
             try:
-                total += await settle_due(session, kid, family.base_currency)
+                total += await _settle(session, allowance, base_currency, now)
                 # Commit per kid: one kid's failure (or a missing FX rate)
                 # doesn't roll back the others, and the per-kid advisory
                 # lock is released rather than held for the whole sweep.
                 await session.commit()
             except Exception:
-                logger.exception("Allowance sweep failed for kid %s", kid.id)
+                logger.exception("Allowance sweep failed for kid %s", allowance.kid_id)
                 await session.rollback()
     if total:
-        logger.info("Allowance sweep paid out %d installment(s) across %d kid(s)", total, len(pairs))
+        logger.info("Allowance sweep paid out %d installment(s) across %d kid(s)", total, len(due))
     return total

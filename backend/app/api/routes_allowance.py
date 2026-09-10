@@ -75,9 +75,11 @@ async def _family_view(db: AsyncSession, family: Family) -> FamilyAllowancesOut:
     kids = list(
         await db.scalars(select(Kid).where(Kid.family_id == family.id).order_by(Kid.created_at))
     )
-    kid_views = [AllowanceOut(**await allowance_service.build_view(db, kid, family)) for kid in kids]
+    views = await allowance_service.build_family_views(db, family, kids)
     await db.commit()
-    return FamilyAllowancesOut(base_currency=family.base_currency, kids=kid_views)
+    return FamilyAllowancesOut(
+        base_currency=family.base_currency, kids=[AllowanceOut(**v) for v in views]
+    )
 
 
 @router.get("/family/allowances", response_model=FamilyAllowancesOut)

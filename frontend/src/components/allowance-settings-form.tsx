@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useSession } from "next-auth/react";
 import { Avatar } from "@/components/ui/avatar";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { useCachedResource, invalidateKid } from "@/lib/use-cached-resource";
@@ -126,9 +125,7 @@ function CadenceField({
 }
 
 export function AllowanceSettingsForm() {
-  const { data: session } = useSession();
-  const token = session?.backendToken ?? null;
-  const { home, refreshHome } = useFamily();
+  const { home, token, refreshHome } = useFamily();
   const toast = useToast();
 
   const colorByKid = useMemo(
