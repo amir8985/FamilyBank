@@ -226,48 +226,73 @@ fresh," not a market-timing decision.
 
 ## Part 6 — Daily database backup
 
-Neon's free tier only keeps ~6 h of restore history. A daily logical dump
-to GCS covers the gap. This *is* a good fit for a Cloud Run **Job** (pure
-batch, no HTTP) — the objection to a Job for the refresh doesn't apply.
+Neon free-tier keeps only a **6 h** history window (the slider in Neon →
+Settings → History window maxes at 6h; 30 days needs a paid plan). That's
+not enough, so `.github/workflows/db-backup.yml` runs `pg_dump` daily via
+GitHub Actions and keeps each dump as a **workflow artifact for 90 days**.
 
-```bash
-gsutil mb -l $REGION gs://$PROJECT_ID-db-backups
-gsutil lifecycle set /dev/stdin gs://$PROJECT_ID-db-backups <<'EOF'
-{"rule":[{"action":{"type":"Delete"},"condition":{"age":30}}]}
-EOF
-```
+Chosen over a Cloud Run Job: no image to build, no service account key,
+nothing in the GCP console — it reuses infra the repo already has, and a
+GitHub artifact is a fine place for a <1 MB gzipped dump.
 
-Create a tiny job image (`backend/backup/Dockerfile`, ~5 lines: a
-`postgres:16` base + `google-cloud-cli`, entrypoint a script that runs
-`pg_dump "$DATABASE_URL_LIBPQ" | gzip | gsutil cp - gs://.../$(date).sql.gz`).
-Note `pg_dump` needs the **libpq** URL (`postgresql://...`), not the
-asyncpg one — store it as a separate secret `DATABASE_URL_LIBPQ`.
+**Setup (one-time):**
 
-```bash
-gcloud run jobs create familybank-db-backup \
-  --image=$REGION-docker.pkg.dev/$PROJECT_ID/familybank/familybank-db-backup:latest \
-  --region=$REGION \
-  --set-secrets=DATABASE_URL_LIBPQ=DATABASE_URL_LIBPQ:latest \
-  --set-env-vars=BACKUP_BUCKET=$PROJECT_ID-db-backups
+1. Neon dashboard → your **production** project → Connection Details →
+   copy the connection string. It's the **libpq** form
+   (`postgresql://USER:PASS@HOST/neondb?sslmode=require`) — *not* the
+   `postgresql+asyncpg://` form the app uses.
+2. GitHub → repo → **Settings → Secrets and variables → Actions → New
+   repository secret**: name `BACKUP_DATABASE_URL`, value = that string.
+3. GitHub → **Actions → DB backup → Run workflow** to test it now. Check
+   the run's **Artifacts** for `db-backup`.
 
-gcloud scheduler jobs create http familybank-db-backup-daily \
-  --location=$REGION \
-  --schedule='0 3 * * *' --time-zone=UTC \
-  --uri="https://$REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$PROJECT_ID/jobs/familybank-db-backup:run" \
-  --http-method=POST \
-  --oauth-service-account-email="$PROJECT_NUMBER-compute@developer.gserviceaccount.com"
-```
+After that it runs itself at 02:17 UTC daily.
+
+### Restoring a backup
+
+A dump is one gzipped file of plain SQL — every `CREATE TABLE` and every
+`INSERT` needed to rebuild the database exactly as it was when the dump
+ran. To use one:
+
+1. **Get the file:** GitHub → Actions → DB backup → the run for the date
+   you want → Artifacts → download `db-backup` →
+   `familybank-YYYYMMDD-HHMMSS.sql.gz`.
+2. **Never restore straight over production.** Restore into a **scratch**
+   database first:
+   - Neon → your project → **Branches → New branch** (a copy-on-write
+     clone, free) → copy *its* connection string, or
+   - a local Postgres / a throwaway Neon project.
+3. **Restore:**
+   ```bash
+   gunzip -c familybank-YYYYMMDD-HHMMSS.sql.gz | psql "postgresql://…scratch-db…"
+   ```
+   (Restore into an *empty* target — the dump has no `DROP`s.)
+4. **Then decide:**
+   - *Recover a few rows* (a kid deleted by mistake, say): query the
+     scratch DB, copy just those rows back into production by hand.
+   - *Full rollback* (bad migration, wide corruption): point the app at
+     the restored branch by updating the `DATABASE_URL` secret in GCP
+     Secret Manager (new version) and redeploying, or promote the Neon
+     branch. This loses everything written since the dump — last resort.
+
+For anything inside the last 6 h, Neon's own **Restore** (Branches → the
+branch → Restore, pick a timestamp) is finer-grained than the daily dump
+— use that first when the incident is recent.
 
 ## Part 7 — Monitoring (the real "cron died" signal)
 
 The staleness fallback covers a missed run or two; it does not tell you
-the scheduler is dead. Add an alert:
+the scheduler is dead. What's set up:
 
-- Cloud Monitoring → alerting policy on metric
-  `cloudscheduler.googleapis.com/job/attempt_count` filtered to
-  `response_code != 200` for `familybank-price-refresh` → notify by email.
-- Optionally a second policy on the log-based signal: no
-  `"Scheduler refresh complete"` log line in the last 14 h.
+- **Log-based metric** `price_refresh_complete` — counts
+  `resource.type="cloud_run_revision" AND "Scheduler refresh complete"`.
+- **Alert policy "Price refresh stopped"** — condition type *Metric
+  absence*, trigger `6h` (the cron runs every 3h, so a healthy system
+  always has a data point within any 6h window). Notifies the
+  `familybank alerts` email channel.
+- The email channel needs verifying once: Monitoring → Alerting → *Edit
+  notification channels* → the email row → send/confirm the verification
+  link.
 
 ## Part 8 — Cutover
 

@@ -1,0 +1,51 @@
+name: DB backup
+
+# Daily logical backup of the production Neon database — a safety net
+# beyond Neon free-tier's 6h "history window". Each run produces one
+# gzipped pg_dump kept as a workflow artifact for 90 days:
+#   GitHub → Actions → "DB backup" → a run → Artifacts → db-backup
+#
+# Restore instructions: docs/cloud-run-migration.md, "Restoring a backup".
+#
+# Requires repo secret BACKUP_DATABASE_URL — the Neon connection string in
+# libpq form (postgresql://USER:PASS@HOST/neondb?sslmode=require), NOT the
+# postgresql+asyncpg:// form the app uses.
+
+on:
+  schedule:
+    - cron: "17 2 * * *" # 02:17 UTC daily
+  workflow_dispatch: {} # "Run workflow" button for an on-demand backup
+
+concurrency: db-backup
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install pg_dump 17
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+
+      - name: Dump
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+        run: |
+          test -n "$BACKUP_DATABASE_URL" || { echo "::error::BACKUP_DATABASE_URL secret is not set"; exit 1; }
+          ts=$(date -u +%Y%m%d-%H%M%S)
+          pg_dump "$BACKUP_DATABASE_URL" --no-owner --no-privileges --format=plain \
+            | gzip -9 > "familybank-${ts}.sql.gz"
+          ls -lh familybank-*.sql.gz
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup
+          path: familybank-*.sql.gz
+          retention-days: 90
+          if-no-files-found: error
