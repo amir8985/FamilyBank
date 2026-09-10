@@ -341,6 +341,12 @@ in the kid's normal cash balance on schedule.
   schedule + last/next payday) — NOT a link (tapping it used to navigate
   to history, which confused the user; "My balance history" button is
   right below). `invalidateKid` drops `allowance:<id>`; `api.put` added.
+- **Settings landing** (`settings-form.tsx`): the Allowance and "Advanced
+  investing & savings" cards each show a `StatusPill` — green **Active**
+  vs. amber **Not set up** (allowance: any kid configured; investing:
+  `boost_buffer_rate` set OR an active savings plan) — to nudge parents
+  who haven't opened those sections. Adds `family-allowances` /
+  `family-settings` / `savings-plans` cached fetches to that screen.
 
 **Known gaps (not bugs):**
 1. `recent_payments` in the allowance view labels each payout with the
