@@ -143,13 +143,21 @@ gcloud run deploy familybank-backend \
   --allow-unauthenticated \
   --min-instances=0 \
   --max-instances=4 \
-  --set-env-vars=DEFAULT_BASE_CURRENCY=USD,DEV_MODE=false,SCHEDULER_ENABLED=false,SCHEDULER_INTERVAL_HOURS=5 \
+  --set-env-vars=DEFAULT_BASE_CURRENCY=USD,DEV_MODE=false,SCHEDULER_ENABLED=false,SCHEDULER_INTERVAL_HOURS=5,REFRESH_STALENESS_THRESHOLD_HOURS=10,FRONTEND_BASE_URL=https://<canonical-frontend-domain> \
   --set-secrets=DATABASE_URL=DATABASE_URL:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,BACKEND_JWT_SECRET=BACKEND_JWT_SECRET:latest,INTERNAL_SCHEDULER_SECRET=INTERNAL_SCHEDULER_SECRET:latest,CORS_ORIGINS=CORS_ORIGINS:latest
 ```
 
-Key choice: **`SCHEDULER_ENABLED=false`** — the in-process loop is off;
-Cloud Scheduler drives the refresh now. The staleness fallback in the app
-code covers a missed run.
+Key choices:
+- **`SCHEDULER_ENABLED=false`** — the in-process loop is off; Cloud
+  Scheduler drives the refresh now. The staleness fallback in the app
+  code covers a missed run.
+- **`FRONTEND_BASE_URL`** (plain env var, not a secret — it's a public
+  URL) — set it explicitly to the canonical frontend domain. Kid-login
+  builds the parent's invite link from this; unset, it falls back to the
+  first `CORS_ORIGINS` entry, which has already pointed invite links at
+  the wrong (old vercel.app) domain in production once. `KID_JWT_TTL_DAYS`
+  / `KID_INVITE_TTL_HOURS` / `KID_CLAIM_MAX_ATTEMPTS` have sane defaults
+  and don't need setting.
 
 Run migrations against the (Frankfurt) DB once:
 
