@@ -9,10 +9,19 @@ substitutions:
   _REPO: familybank            # Artifact Registry repo
   _SERVICE: familybank-backend
 
+# The migrate step runs `alembic upgrade head`, whose env.py imports the
+# app config — pydantic Settings requires every non-defaulted field, not
+# just the DB URL — so all four required secrets are wired in below.
 availableSecrets:
   secretManager:
     - versionName: projects/$PROJECT_ID/secrets/DATABASE_URL/versions/latest
       env: DATABASE_URL
+    - versionName: projects/$PROJECT_ID/secrets/GOOGLE_CLIENT_ID/versions/latest
+      env: GOOGLE_CLIENT_ID
+    - versionName: projects/$PROJECT_ID/secrets/BACKEND_JWT_SECRET/versions/latest
+      env: BACKEND_JWT_SECRET
+    - versionName: projects/$PROJECT_ID/secrets/INTERNAL_SCHEDULER_SECRET/versions/latest
+      env: INTERNAL_SCHEDULER_SECRET
 
 steps:
   # 1. Build the image, tagged with the commit SHA (immutable) and :latest.
@@ -40,7 +49,7 @@ steps:
     entrypoint: alembic
     args: [upgrade, head]
     dir: backend
-    secretEnv: [DATABASE_URL]
+    secretEnv: [DATABASE_URL, GOOGLE_CLIENT_ID, BACKEND_JWT_SECRET, INTERNAL_SCHEDULER_SECRET]
 
   # 3. Deploy. No --set-env-vars / --set-secrets here: those are set once
   #    on the first manual deploy and gcloud preserves them across
