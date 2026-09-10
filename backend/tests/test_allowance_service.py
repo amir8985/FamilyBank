@@ -6,7 +6,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.models.allowance import Allowance, AllowanceCadence
+from app.models.allowance import AllowanceCadence
 from app.models.kid import Kid
 from app.services import allowance_service, debts_db_service, fx_service
 from app.services.debts_db_service import DebtTransactionType
@@ -108,19 +108,9 @@ async def test_settle_is_idempotent_within_a_period(db_session, family):
     assert await debts_db_service.get_balance(db_session, kid.id) == Decimal("10.00")
 
 
-async def test_settle_skips_an_inactive_row(db_session, family):
-    # The UI has no "pause" — an allowance is created or removed — but the
-    # `is_active` guard stays as defence in case a row is ever flagged off.
+async def test_settle_does_nothing_without_an_allowance(db_session, family):
     kid = await _kid(db_session, family)
-    allowance = await allowance_service.upsert_allowance(
-        db_session, kid, family, amount=Decimal("10"), cadence=AllowanceCadence.WEEKLY,
-        payday=0,
-    )
-    allowance.is_active = False
-    allowance.next_run_at = datetime.now(timezone.utc) - timedelta(days=30)
-    await db_session.flush()
     assert await allowance_service.settle_due(db_session, kid, family.base_currency) == 0
-    assert await debts_db_service.get_balance(db_session, kid.id) == Decimal("0.00")
 
 
 async def test_long_gap_is_capped_not_dumped(db_session, family):

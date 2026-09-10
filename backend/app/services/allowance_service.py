@@ -15,7 +15,6 @@ the clock advanced one period at a time, capped so an app left closed
 for a year doesn't dump a year of back-pay in one lump.
 """
 
-import calendar
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -69,13 +68,13 @@ def _midnight(d: datetime) -> datetime:
 
 def _advance(dt: datetime, cadence: AllowanceCadence) -> datetime:
     """One period forward from `dt`. Weekly = +7 days. Monthly = same
-    day-of-month next month (payday is 1..28, so it always exists)."""
+    day-of-month next month — `dt.day` is always a payday (1..28, enforced
+    by validate_payday), which every month has."""
     if cadence == AllowanceCadence.WEEKLY:
         return dt + timedelta(days=7)
     year = dt.year + (1 if dt.month == 12 else 0)
     month = 1 if dt.month == 12 else dt.month + 1
-    day = min(dt.day, calendar.monthrange(year, month)[1])
-    return dt.replace(year=year, month=month, day=day)
+    return dt.replace(year=year, month=month)
 
 
 def first_run_at(now: datetime, cadence: AllowanceCadence, payday: int) -> datetime:
@@ -85,15 +84,9 @@ def first_run_at(now: datetime, cadence: AllowanceCadence, payday: int) -> datet
         days_ahead = (payday - now.weekday()) % 7
         candidate = _midnight(now) + timedelta(days=days_ahead)
     else:
-        candidate = _midnight(now).replace(day=min(payday, calendar.monthrange(now.year, now.month)[1]))
+        candidate = _midnight(now).replace(day=payday)  # payday is 1..28
     if candidate <= now:
         candidate = _advance(candidate, cadence)
-        if cadence == AllowanceCadence.MONTHLY:
-            # _advance may have clamped a short month (e.g. Feb) — re-seat
-            # on the real payday now that we're in the next month.
-            candidate = candidate.replace(
-                day=min(payday, calendar.monthrange(candidate.year, candidate.month)[1])
-            )
     return candidate
 
 
@@ -147,7 +140,6 @@ async def upsert_allowance(
     existing.currency = family.base_currency
     existing.cadence = cadence
     existing.payday = payday
-    existing.is_active = True
     await session.flush()
     return existing
 
@@ -200,7 +192,7 @@ async def _settle(
     kid backs off (returns 0) instead of double-paying — the two callers
     that race are the inline settle on a read and the refresh-cycle sweep.
     """
-    if not allowance.is_active or allowance.next_run_at > now:
+    if allowance.next_run_at > now:
         return 0
 
     got_lock = await session.scalar(
@@ -212,7 +204,7 @@ async def _settle(
     # Re-read after taking the lock — the settle that beat us to it may
     # have already advanced the clock.
     await session.refresh(allowance)
-    if not allowance.is_active or allowance.next_run_at > now:
+    if allowance.next_run_at > now:
         return 0
 
     paid = 0
@@ -285,7 +277,6 @@ def _view_dict(
         "kid_id": kid.id,
         "kid_name": kid.name,
         "configured": allowance is not None,
-        "is_active": bool(allowance and allowance.is_active),
         "recent_payments": [
             {"amount": p.amount, "currency": family_currency, "paid_at": p.created_at}
             for p in payments
@@ -297,7 +288,7 @@ def _view_dict(
             currency=allowance.currency,
             cadence=allowance.cadence,
             payday=allowance.payday,
-            next_payday=allowance.next_run_at if allowance.is_active else None,
+            next_payday=allowance.next_run_at,
             last_paid_at=allowance.last_paid_at,
         )
     return view
@@ -348,10 +339,11 @@ def set_sweep_enabled(value: bool) -> None:
 
 
 async def settle_all_due() -> int:
-    """Sweep every active allowance in every family — called once per
-    price-refresh cycle (scheduler.jobs.run_refresh) so balances shown on
-    /home stay current even when nobody opens an allowance screen.
-    Opens its own session and commits. Returns the total payouts made.
+    """Sweep every allowance in every family that has a payout due —
+    called once per price-refresh cycle (scheduler.jobs.run_refresh) so
+    balances shown on /home stay current even when nobody opens an
+    allowance screen. Opens its own session and commits. Returns the
+    total payouts made.
     """
     if not _sweep_enabled:
         return 0
@@ -363,7 +355,7 @@ async def settle_all_due() -> int:
             select(Allowance, Family.base_currency)
             .join(Kid, Kid.id == Allowance.kid_id)
             .join(Family, Family.id == Kid.family_id)
-            .where(Allowance.is_active, Allowance.next_run_at <= now)
+            .where(Allowance.next_run_at <= now)
         )
         due = rows.all()
         for allowance, base_currency in due:

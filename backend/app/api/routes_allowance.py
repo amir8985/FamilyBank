@@ -6,12 +6,7 @@ from app.api.deps import KidAndFamily, get_family, get_kid_and_family, require_p
 from app.core.db import get_db
 from app.models.family import Family
 from app.models.kid import Kid
-from app.schemas.allowance import (
-    AllowanceOut,
-    AllowanceUpsert,
-    BulkAllowanceUpsert,
-    FamilyAllowancesOut,
-)
+from app.schemas.allowance import AllowanceOut, AllowanceUpsert, FamilyAllowancesOut
 from app.services import allowance_service
 
 router = APIRouter(tags=["allowance"])
@@ -51,7 +46,9 @@ async def upsert_kid_allowance(
         )
     except allowance_service.AllowanceError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-    await db.commit()
+    # One commit for the upsert + any catch-up settle build_view triggers
+    # (a fresh allowance's next payday is in the future, so that's usually
+    # a no-op; an amount edit on an overdue schedule pays here).
     view = await allowance_service.build_view(db, kid_family.kid, kid_family.family)
     await db.commit()
     return AllowanceOut(**view)
@@ -90,7 +87,7 @@ async def list_family_allowances(
 
 @router.post("/family/allowances", response_model=FamilyAllowancesOut)
 async def set_family_allowance(
-    body: BulkAllowanceUpsert,
+    body: AllowanceUpsert,
     family: Family = Depends(get_family),
     db: AsyncSession = Depends(get_db),
 ) -> FamilyAllowancesOut:

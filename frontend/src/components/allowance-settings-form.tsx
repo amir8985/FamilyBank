@@ -14,10 +14,10 @@ import {
   currencySymbol,
   formatDate,
   formatMoney,
+  ordinal,
+  WEEKDAYS,
 } from "@/lib/format";
 import type { AllowanceCadence, AllowanceOut, FamilyAllowancesOut } from "@/lib/types";
-
-const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 type Draft = {
   amount: string;
@@ -184,13 +184,6 @@ function AllowanceEditorSheet({
       </button>
     </BottomSheet>
   );
-}
-
-function ordinal(n: number): string {
-  if (n % 10 === 1 && n !== 11) return "st";
-  if (n % 10 === 2 && n !== 12) return "nd";
-  if (n % 10 === 3 && n !== 13) return "rd";
-  return "th";
 }
 
 // --- main screen -----------------------------------------------------

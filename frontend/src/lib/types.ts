@@ -214,7 +214,6 @@ export type AllowanceOut = {
   kid_id: string;
   kid_name: string;
   configured: boolean;
-  is_active: boolean;
   amount: string | null;
   currency: string | null;
   cadence: AllowanceCadence | null;
@@ -227,12 +226,6 @@ export type AllowanceOut = {
 export type FamilyAllowancesOut = {
   base_currency: string;
   kids: AllowanceOut[];
-};
-
-export type AllowanceUpsert = {
-  amount: number;
-  cadence: AllowanceCadence;
-  payday: number;
 };
 
 export type KidMe = {

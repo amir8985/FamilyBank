@@ -38,10 +38,13 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("payday", sa.Integer(), nullable=False),
-        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("next_run_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("last_paid_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        # Weekly payday is 0..6, monthly 1..28 — the service's date math
+        # (allowance_service._advance) relies on payday always being a day
+        # every month has, so enforce the outer bound at the DB too.
+        sa.CheckConstraint("payday >= 0 AND payday <= 28", name="ck_allowances_payday_range"),
     )
     # One allowance per kid — a regenerate updates the row in place.
     op.create_index("ix_allowances_kid_id", "allowances", ["kid_id"], unique=True)

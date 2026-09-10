@@ -32,6 +32,37 @@ frontend/   Next.js 16 (App Router) + Tailwind v4 — see frontend/README.md
 
 ## Current status (as of 2026-09-10)
 
+**Allowance (דמי כיס) — merged to `master`** (backend `1.10.0`, frontend
+`0.11.0`). Migration **0016** (`allowances` table + `debt_transactions.
+is_allowance`). Parents set a recurring weekly/monthly cash top-up per
+kid (or "same for everyone"); it lands in the kid's normal cash balance
+on schedule as an `is_allowance`-flagged ledger credit. Full design +
+decisions in the "Allowance (דמי כיס)" section below. Key things for the
+next session:
+- **No cron.** Payouts settle lazily — inline when anyone opens an
+  allowance screen (kid home, parent settings landing + allowance
+  screen), and once per price-refresh cycle (`jobs.run_refresh` →
+  `allowance_service.settle_all_due`, disabled in tests via
+  `set_sweep_enabled`). A payout can therefore land a few hours after
+  midnight-on-payday; it's always dated correctly. Accepted by the user.
+- **GET side effects**: `GET /kids/{id}/allowance` and
+  `GET /family/allowances` both settle-then-commit. The Settings landing
+  now calls `/family/allowances` for its "Not set up" pill, so opening
+  Settings can trigger a payout. Harmless (the money was due regardless,
+  settle is idempotent) but noted — if it ever bites, add a no-settle
+  variant for the pill check.
+- **No pause.** An allowance is created or removed (Turn off = DELETE).
+  `is_active` was dropped entirely (column, schema, guards) after the
+  user found on/paused/off confusing.
+- **`allowances.payday`** has a DB CHECK (`0..28`); `allowance_service.
+  _advance`/`first_run_at` rely on payday being a day every month has.
+- **DDL-churn footgun hit this session**: `alembic downgrade` on the
+  shared Neon *pooler* dev DB (to re-edit not-yet-merged 0016) poisoned
+  PgBouncer's cached statement plans → transient
+  `InvalidCachedStatementError` on every `allowances` query for ~5 min.
+  Self-healed. Next time: edit the migration file + `ALTER TABLE` to
+  match, don't downgrade/upgrade the pooled endpoint.
+
 **`kid-pages` is merged to `master`** (backend `1.9.0`, frontend `0.10.0`
 at merge). The whole "Kid login + kid-facing app" section below is now
 live, not in-flight.
@@ -287,19 +318,19 @@ Check `netstat`/`.env` for ground truth before trusting this.
 
 ### Allowance (דמי כיס) — what it is and key decisions
 
-Branch `kid-allowance` (migration **0016**), not yet merged. Parent sets a
-recurring cash top-up per kid (or the same for all kids at once); it lands
-in the kid's normal cash balance on schedule.
+Migration **0016** (`allowances` + `debt_transactions.is_allowance`).
+Parent sets a recurring cash top-up per kid (or the same for all kids at
+once); it lands in the kid's normal cash balance on schedule.
 
 - **One `allowances` row per kid** (`kid_id` unique) — a kid has an
-  allowance or doesn't; editing replaces the row, "turn off" DELETEs it.
+  allowance or doesn't; editing replaces the row, "Turn off" DELETEs it.
+  **No pause / no `is_active`** — the user found on/paused/off confusing,
+  so the concept was removed entirely (column, schema field, guards).
   Fields: `amount` + `currency` (family currency at set time, converted at
   payout like `SavingsDeposit.currency` — the currency-change path needs
   *nothing* allowance-specific), `cadence` (`weekly`|`monthly`), `payday`
-  (weekly 0–6 Mon..Sun = `datetime.weekday()`; monthly 1–28),
-  `next_run_at`, `last_paid_at`. `is_active` column stays (always `True`,
-  defended in `_settle`/`settle_all_due`) but there's **no pause in the
-  UI** — the user found on/paused/off confusing, so it's create-or-remove.
+  (weekly 0–6 Mon..Sun = `datetime.weekday()`; monthly 1–28; DB CHECK
+  `0..28`), `next_run_at`, `last_paid_at`.
 - **NOT a wallet / not stateless-recompute.** Unlike savings/boost, each
   payout is a real one-time ledger write: a `debt_transactions` ADD row
   flagged **`is_allowance`** (migration adds the column,
@@ -317,17 +348,19 @@ in the kid's normal cash balance on schedule.
   autouse fixture, same as the price staleness fallback). A new allowance
   never pays on creation — `first_run_at` is the next payday strictly in
   the future.
-- **Concurrency**: `settle_due` takes a per-kid
+- **Concurrency**: `_settle` takes a per-kid
   `pg_try_advisory_xact_lock(_LOCK_NAMESPACE, kid_low_31_bits)` — a second
   racing settle (inline vs. sweep) returns 0 instead of double-paying.
   Transaction-scoped so it auto-releases on commit/rollback (tests too).
+  `build_family_views` calls `_settle` per kid in one request txn, so it
+  briefly holds up to N per-kid locks — fine at family scale.
 - **Endpoints**: `GET/PUT/DELETE /kids/{id}/allowance` (PUT/DELETE
   `require_parent`; GET is kid-or-parent via `get_kid_and_family`),
   `GET /family/allowances` (batched — `build_family_views`: one query for
   all allowances, one windowed query for all recent payouts, then settle
   per kid; not the per-kid N+1 the perf section warns against),
-  `POST /family/allowances` (bulk = apply one allowance to every kid,
-  replacing any that exist). A plain amount edit keeps the existing
+  `POST /family/allowances` (bulk = apply one `AllowanceUpsert` to every
+  kid, replacing any that exist). A plain amount edit keeps the existing
   `next_run_at`; changing cadence/payday re-anchors it.
 - **Frontend**: parent screen `/home/settings/allowance`
   (`allowance-settings-form.tsx`) — linked from a top-level Settings card
@@ -580,6 +613,14 @@ Every worktree needs its own `backend/.env`/`frontend/.env.local`
   case, not a skip-wrapping no-op (see `app/core/db.py`).
 - Neon's pooled endpoint + `pool_pre_ping=True` roughly doubles latency
   (extra round-trip per request) — use `pool_recycle` instead.
+- **Don't `alembic downgrade`/re-`upgrade` a not-yet-merged migration on
+  the shared Neon *pooler* dev DB.** Dropping + recreating a table or
+  enum type changes its OID; PgBouncer's pooled backends keep stale
+  cached statement plans and every query on that object throws
+  `InvalidCachedStatementError` / `NotSupportedError` for ~5 min
+  (self-heals as connections cycle). To revise an unshipped migration:
+  edit the migration file, then `ALTER TABLE` the dev DB by hand to
+  match its new end state — never a full down/up on the pooled endpoint.
 - Global rarely-changing reference data (price/FX cache) should be
   cached in-process (`investing_service.load_price_context`), cleared on
   scheduler refresh + a TTL safety net. **Any new module-level cache

@@ -44,7 +44,6 @@ async def test_parent_sets_and_reads_a_kids_allowance(client, auth_headers, fami
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["configured"] is True
-    assert body["is_active"] is True
     assert Decimal(body["amount"]) == Decimal("12.50")
     assert body["cadence"] == "weekly"
     assert body["next_payday"] is not None

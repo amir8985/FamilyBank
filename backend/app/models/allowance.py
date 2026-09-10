@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, Numeric
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -36,6 +36,9 @@ class Allowance(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     """
 
     __tablename__ = "allowances"
+    __table_args__ = (
+        CheckConstraint("payday >= 0 AND payday <= 28", name="ck_allowances_payday_range"),
+    )
 
     kid_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("kids.id", ondelete="CASCADE"), unique=True, index=True
@@ -59,9 +62,6 @@ class Allowance(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     # Weekly: day of week, Monday=0 .. Sunday=6 (matches datetime.weekday()).
     # Monthly: day of month, 1..28 (28 so every month has one).
     payday: Mapped[int] = mapped_column(Integer)
-
-    # Paused by the parent — settings kept, no payouts happen while false.
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # When the next payout is due. Advanced one period at a time as
     # payouts are settled. Set on creation to the first upcoming payday

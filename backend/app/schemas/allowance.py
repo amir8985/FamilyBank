@@ -14,11 +14,6 @@ class AllowanceUpsert(BaseModel):
     payday: int = Field(ge=0, le=28)
 
 
-class BulkAllowanceUpsert(AllowanceUpsert):
-    """Same shape as AllowanceUpsert — applied to every kid in the family
-    in one call (the "set the same allowance for everyone" action)."""
-
-
 class AllowancePaymentOut(BaseModel):
     amount: Decimal
     currency: str
@@ -29,7 +24,6 @@ class AllowanceOut(BaseModel):
     kid_id: uuid.UUID
     kid_name: str
     configured: bool
-    is_active: bool
     amount: Decimal | None = None
     currency: str | None = None
     cadence: AllowanceCadence | None = None
