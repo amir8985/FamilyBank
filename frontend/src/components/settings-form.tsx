@@ -14,13 +14,12 @@ import { api, ApiError } from "@/lib/api";
 import { SUPPORTED_CURRENCIES } from "@/lib/currencies";
 import type { FamilyAllowancesOut, FamilySettings, KidSummary, SavingsPlanOut } from "@/lib/types";
 
-function StatusPill({ on }: { on: boolean | null }) {
-  if (on === null) return null;
-  return on ? (
-    <span className="text-[10px] font-semibold rounded-full px-1.5 py-0.5 text-tint-dark bg-tint-emerald shrink-0">
-      Active
-    </span>
-  ) : (
+// Only flags the "nothing here yet" case — a quiet nudge to open the
+// section. Once something is configured the pill just disappears (no
+// "Active" badge; the user found that noisy).
+function NotSetUpPill({ configured }: { configured: boolean | null }) {
+  if (configured !== false) return null;
+  return (
     <span className="text-[10px] font-semibold rounded-full px-1.5 py-0.5 text-brass-dark bg-tint-brass shrink-0">
       Not set up
     </span>
@@ -118,7 +117,7 @@ export function SettingsForm() {
           <span className="text-[12px] text-muted">Recurring pocket money, weekly or monthly</span>
         </span>
         <span className="flex items-center gap-2 shrink-0">
-          <StatusPill on={allowanceOn} />
+          <NotSetUpPill configured={allowanceOn} />
           <span className="text-emerald text-lg">›</span>
         </span>
       </Link>
@@ -134,7 +133,7 @@ export function SettingsForm() {
           <span className="text-[12px] text-muted">Stock boost and savings plans</span>
         </span>
         <span className="flex items-center gap-2 shrink-0">
-          <StatusPill on={investingOn} />
+          <NotSetUpPill configured={investingOn} />
           <span className="text-emerald text-lg">›</span>
         </span>
       </Link>
