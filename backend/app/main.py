@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
+    routes_allowance,
     routes_auth,
     routes_catalog,
     routes_debt,
@@ -72,6 +73,7 @@ app.include_router(routes_investing.router)
 app.include_router(routes_catalog.router)
 app.include_router(routes_family.router)
 app.include_router(routes_savings.router)
+app.include_router(routes_allowance.router)
 app.include_router(routes_internal.router)
 
 

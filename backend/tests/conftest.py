@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.core import request_logging
 from app.scheduler import jobs as scheduler_jobs
+from app.services import allowance_service
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.rate_limit import clear_rate_limit_state
@@ -45,9 +46,15 @@ def _no_request_log_persistence():
     # non-rolled-back commit — against the shared dev DB, whose prices are
     # usually stale enough to trip it. Off for the suite.
     scheduler_jobs.set_stale_fallback_enabled(False)
+    # The recurring-allowance sweep (allowance_service.settle_all_due, hit
+    # by run_refresh) opens its own SessionLocal and really commits — same
+    # hazard as the staleness fallback. Off for the suite; tests that
+    # exercise it call settle_due() directly on the request session.
+    allowance_service.set_sweep_enabled(False)
     yield
     request_logging.set_persist_enabled(True)
     scheduler_jobs.set_stale_fallback_enabled(True)
+    allowance_service.set_sweep_enabled(True)
 
 
 @pytest_asyncio.fixture

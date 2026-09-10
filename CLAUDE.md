@@ -88,6 +88,9 @@ the dev server + synthetic test family (`family_id
    silent thereafter.
 7. **Server-version display** (2026-09-10): `/health` returns the API
    version; Settings footer reveals it under the frontend version on tap.
+8. **Allowance (דמי כיס)** (branch `kid-allowance`, 2026-09-10, *not yet
+   merged*): recurring weekly/monthly cash top-up per kid — see its
+   section below.
 
 ### Savings plans — what it is and key decisions
 
@@ -281,6 +284,67 @@ Check `netstat`/`.env` for ground truth before trusting this.
 4. Bare `/kid` with 2+ sessions and no `kid_last` cookie picks the first
    arbitrarily. Fine in practice — each kid uses their own
    `/kid/kids/<handle>` link and `kid_last` is set on every home load.
+
+### Allowance (דמי כיס) — what it is and key decisions
+
+Branch `kid-allowance` (migration **0016**), not yet merged. Parent sets a
+recurring cash top-up per kid (or the same for all kids at once); it lands
+in the kid's normal cash balance on schedule.
+
+- **One `allowances` row per kid** (`kid_id` unique) — a kid has an
+  allowance or doesn't; editing replaces the row. Fields: `amount` +
+  `currency` (family currency at set time, converted at payout like
+  `SavingsDeposit.currency` — the currency-change path needs *nothing*
+  allowance-specific), `cadence` (`weekly`|`monthly`), `payday` (weekly
+  0–6 Mon..Sun = `datetime.weekday()`; monthly 1–28), `is_active`
+  (pause), `next_run_at`, `last_paid_at`.
+- **NOT a wallet / not stateless-recompute.** Unlike savings/boost, each
+  payout is a real one-time ledger write: a `debt_transactions` ADD row
+  flagged **`is_allowance`** (migration adds the column,
+  `server_default false`), note `"Weekly allowance"` / `"Monthly
+  allowance"`. So it shows in the balance everywhere + the existing
+  history screen (label "Allowance").
+- **Lazy settle, no per-payment cron.** `allowance_service.settle_due`
+  pays every period whose `next_run_at` has passed (capped at
+  `MAX_CATCHUP_PERIODS = 60` — a long-closed app fast-forwards instead of
+  dumping back-pay) and advances the clock. Called: inline (+commit) from
+  `GET /kids/{id}/allowance` (kid app home + parent settings both load
+  it) and `GET /family/allowances`; and swept once per price-refresh
+  cycle by `jobs.run_refresh` → `settle_all_due()` (own session, own
+  commit — **disabled in tests** via `set_sweep_enabled` + the conftest
+  autouse fixture, same as the price staleness fallback). A new allowance
+  never pays on creation — `first_run_at` is the next payday strictly in
+  the future.
+- **Concurrency**: `settle_due` takes a per-kid
+  `pg_try_advisory_xact_lock(_LOCK_NAMESPACE, kid_low_31_bits)` — a second
+  racing settle (inline vs. sweep) returns 0 instead of double-paying.
+  Transaction-scoped so it auto-releases on commit/rollback (tests too).
+- **Endpoints**: `GET/PUT/DELETE /kids/{id}/allowance` (PUT/DELETE
+  `require_parent`; GET is kid-or-parent via `get_kid_and_family`),
+  `GET /family/allowances`, `POST /family/allowances` (bulk = apply one
+  allowance to every kid). A plain amount edit keeps the existing
+  `next_run_at`; changing cadence/payday re-anchors it.
+- **Frontend**: parent screen `/home/settings/allowance`
+  (`allowance-settings-form.tsx`) — linked from a top-level Settings card
+  (above "Advanced investing & savings", it's a core feature). "Set the
+  same for everyone" block + per-kid cards (amount, Weekly/Monthly,
+  payday `<select>`, active toggle, Save/Remove). Kid sees an "Your
+  allowance" card on `kid-home.tsx` (amount + schedule + last/next
+  payday) linking to their balance history. `invalidateKid` now also
+  drops `allowance:<id>`; `api.put` added.
+
+**Known gaps (not bugs):**
+1. `recent_payments` in the allowance view labels each payout with the
+   *current* family currency (same tolerance as the non-adjustment rows
+   in `routes_debt._to_out` — a currency change mislabels older allowance
+   payouts until you open the history screen, which reconstructs them).
+2. Monthly payday capped at 28 (so every month has one) — no "last day
+   of month" option.
+3. No "pay now / catch up now" button — settling is time-driven only.
+4. `/home` doesn't settle inline; a payout shows on the parent's home
+   after the next refresh sweep or when they open an allowance screen
+   (the `/home` poll then reconciles). Acceptable — allowance isn't
+   second-critical.
 
 ### Instant UX (client-side store + optimistic writes)
 

@@ -10,8 +10,14 @@ import { useFamily, useKidLinks } from "@/lib/family-store";
 import { useCachedResource } from "@/lib/use-cached-resource";
 import { resetKidCaches } from "@/lib/kid-family-store";
 import { api } from "@/lib/api";
-import { formatMoney, formatPct, formatSignedMoney } from "@/lib/format";
-import type { PortfolioOut } from "@/lib/types";
+import {
+  allowanceScheduleLabel,
+  formatDate,
+  formatMoney,
+  formatPct,
+  formatSignedMoney,
+} from "@/lib/format";
+import type { AllowanceOut, PortfolioOut } from "@/lib/types";
 
 export function KidHome() {
   const router = useRouter();
@@ -33,6 +39,12 @@ export function KidHome() {
     () => api.get<PortfolioOut>(`/kids/${kid.id}/portfolio`, token as string),
     { ttlMs: 15_000 }
   );
+  const allowanceRes = useCachedResource<AllowanceOut>(
+    token ? `allowance:${kid.id}` : null,
+    () => api.get<AllowanceOut>(`/kids/${kid.id}/allowance`, token as string),
+    { ttlMs: 30_000 }
+  );
+  const allowance = allowanceRes.data;
   const p = portfolioRes.data;
   const currency = home.base_currency;
 
@@ -128,6 +140,33 @@ export function KidHome() {
             </span>
           </div>
         )}
+
+        {allowance?.configured &&
+          allowance.is_active &&
+          allowance.amount &&
+          allowance.cadence != null &&
+          allowance.payday != null && (
+            <Link
+              href={`${links.pagePrefix}/history`}
+              className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex flex-col gap-1"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[13px] font-medium text-muted-strong">Your allowance</span>
+                <span className="font-semibold text-[15px] text-emerald-dark">
+                  {formatMoney(allowance.amount, allowance.currency ?? currency)}
+                </span>
+              </div>
+              <div className="text-[12px] text-muted">
+                {allowanceScheduleLabel(allowance.cadence, allowance.payday)}
+                {" · "}
+                {allowance.recent_payments.length > 0
+                  ? `last paid ${formatDate(allowance.recent_payments[0].paid_at)}`
+                  : allowance.next_payday
+                    ? `first payment ${formatDate(allowance.next_payday)}`
+                    : ""}
+              </div>
+            </Link>
+          )}
       </div>
 
       <div className="flex-1 px-5 pt-4 pb-6 flex flex-col gap-2.5">

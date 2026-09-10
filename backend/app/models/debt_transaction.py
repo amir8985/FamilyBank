@@ -59,3 +59,8 @@ class DebtTransaction(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     # is_investment: history shows "Moved to savings"/"Savings payout"
     # rather than a bare "Deducted"/"Added".
     is_savings: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # True only for the ADD row allowance_service writes when a recurring
+    # allowance pays out — same idea as is_savings/is_investment: history
+    # shows "Allowance" rather than a bare "Added" that looks identical to
+    # a parent manually topping up the balance.
+    is_allowance: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")

@@ -60,9 +60,11 @@ export default function KidHistoryPage({
                 ? t.type === "add"
                   ? "Savings payout"
                   : "Moved to savings"
-                : t.type === "add"
-                  ? "Added"
-                  : "Deducted";
+                : t.is_allowance
+                  ? "Allowance"
+                  : t.type === "add"
+                    ? "Added"
+                    : "Deducted";
           return (
             <div
               key={t.id}

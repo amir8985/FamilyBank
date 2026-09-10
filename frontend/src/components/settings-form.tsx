@@ -73,6 +73,17 @@ export function SettingsForm() {
       </label>
 
       <Link
+        href="/home/settings/allowance"
+        className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex items-center justify-between"
+      >
+        <span className="flex flex-col">
+          <span className="font-semibold text-[14.5px] text-emerald-dark">Allowance</span>
+          <span className="text-[12px] text-muted">Recurring pocket money, weekly or monthly</span>
+        </span>
+        <span className="text-emerald text-lg">›</span>
+      </Link>
+
+      <Link
         href="/home/settings/investing"
         className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex items-center justify-between"
       >
