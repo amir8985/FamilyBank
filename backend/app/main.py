@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="FamilyBank API",
-    version="1.9.0",
+    version="1.9.1",
     lifespan=lifespan,
     # Swagger/ReDoc/schema map out the whole API surface (including
     # /internal/* route names) to anyone who visits them — harmless
@@ -77,4 +77,6 @@ app.include_router(routes_internal.router)
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok"}
+    # `version` mirrors the FastAPI `version=` above (single source) — the
+    # Settings screen reads it to show which API build is running.
+    return {"status": "ok", "version": app.version}

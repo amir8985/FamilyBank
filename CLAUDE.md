@@ -30,22 +30,23 @@ backend/    FastAPI + SQLAlchemy + Postgres (Neon) — see backend/README.md
 frontend/   Next.js 16 (App Router) + Tailwind v4 — see frontend/README.md
 ```
 
-## Current status (as of 2026-09-09)
+## Current status (as of 2026-09-10)
 
-Two workstreams in flight (check `git branch`/`git log` for real state):
+**`kid-pages` is merged to `master`** (backend `1.9.0`, frontend `0.10.0`
+at merge). The whole "Kid login + kid-facing app" section below is now
+live, not in-flight.
 
-**`kid-pages` — Kid login + kid-facing app (this branch).** Versions:
-backend `1.9.0`, frontend `0.10.0`. 153 backend tests pass (146 + 7 from
-worker-1's merged scheduler work; 19 of the total in `test_kid_auth.py`);
-`build`+`lint`+`tsc --noEmit` clean; interactively Playwright-verified.
-Went through three rounds of user feedback (opaque URL handle,
-multi-device links, 24h TTL, parent "sign out all devices", `/home`
-poll, "Link a device" wording) + `origin/master` merged in (worker-1's
-scheduler changes; conflicts: `main.py` version → 1.9.0, `CLAUDE.md`
-status) + a `finish-feature` review pass (folded `get_kid`/`get_kid_and_family`/
-`get_current_kid` isolation into one `_resolve_kid_and_family`; fixed
-stale comments; merged the `/home` poll's two visibility listeners).
-**Merging/pushing to `master` gated on explicit user confirmation.**
+**Server-version display — merged on top (backend `1.9.1`, frontend
+`0.10.1`).** `/health` now returns `{"status","version"}` (`version` is
+`app.version`, mirroring the FastAPI `version=` — single source, nothing
+hardcodes it elsewhere). Settings footer: `components/app-version.tsx`
+(client) shows `v<frontend>` by default (dotted underline, tappable) and
+reveals a second dimmer line `server v<api>` below it on tap — tap the
+version again to collapse. Fetches `/health` from
+`NEXT_PUBLIC_BACKEND_URL` only on first reveal; a failed fetch shows
+"unavailable" and doesn't retry (fine for a footer). `test_health.py`
+covers the endpoint. Kept deliberately minimal per user: just the two
+version numbers, hidden by default so the footer stays quiet.
 
 **`perf-followups` — Cloud Run migration groundwork (worker-1).** The
 *code* landed on `master` 2026-09-09 (`scheduler/jobs.py`: a Postgres
@@ -82,9 +83,11 @@ the dev server + synthetic test family (`family_id
    full-page freezes on slow backend.
 5. **Savings plans**: parent-defined savings plans (flexible/locked) a
    kid can move cash into, compounding monthly.
-6. **Kid login + kid app** (latest, branch `kid-pages`, NOT yet
-   reviewed/merged): kids get their own `/kid` area — invite = link +
-   spoken PIN, one-time entry, silent thereafter.
+6. **Kid login + kid app** (merged to `master` 2026-09-10): kids get
+   their own `/kid` area — invite = link + spoken PIN, one-time entry,
+   silent thereafter.
+7. **Server-version display** (2026-09-10): `/health` returns the API
+   version; Settings footer reveals it under the frontend version on tap.
 
 ### Savings plans — what it is and key decisions
 
@@ -242,11 +245,12 @@ Migrations `0014_kid_auth` (`kids.token_version`, `kid_invites`) +
 `0015_kid_public_id_multi_device` (`kids.public_id`, `kids.sessions_active`,
 `consumed_at`→`first_claimed_at`). Shared dev DB is on `0015`.
 
-**Local dev ports drifted this session** (Windows ghost-port bug on 8100
-— see Lessons learned): backend `8101`, frontend `3014`. `backend/.env`
-`CORS_ORIGINS` lists `3014` first (so `frontend_origin` = the claim-link
-host resolves to `:3014`); `frontend/.env.local` `BACKEND_URL` →
-`:8101`. Check `netstat`/`.env` for ground truth before trusting this.
+**Local dev ports drifted this session** (Windows ghost-port bug, hit
+again on `8101` then `8102` — see Lessons learned): backend `8103`,
+frontend `3015`. `backend/.env` `CORS_ORIGINS` lists `3015` first (so
+`frontend_origin` = the claim-link host resolves to `:3015`);
+`frontend/.env.local` `BACKEND_URL`/`NEXT_PUBLIC_BACKEND_URL` → `:8103`.
+Check `netstat`/`.env` for ground truth before trusting this.
 
 **Non-obvious:**
 - `KidInvite` datetime columns MUST be `DateTime(timezone=True)` in the
