@@ -292,12 +292,14 @@ recurring cash top-up per kid (or the same for all kids at once); it lands
 in the kid's normal cash balance on schedule.
 
 - **One `allowances` row per kid** (`kid_id` unique) — a kid has an
-  allowance or doesn't; editing replaces the row. Fields: `amount` +
-  `currency` (family currency at set time, converted at payout like
-  `SavingsDeposit.currency` — the currency-change path needs *nothing*
-  allowance-specific), `cadence` (`weekly`|`monthly`), `payday` (weekly
-  0–6 Mon..Sun = `datetime.weekday()`; monthly 1–28), `is_active`
-  (pause), `next_run_at`, `last_paid_at`.
+  allowance or doesn't; editing replaces the row, "turn off" DELETEs it.
+  Fields: `amount` + `currency` (family currency at set time, converted at
+  payout like `SavingsDeposit.currency` — the currency-change path needs
+  *nothing* allowance-specific), `cadence` (`weekly`|`monthly`), `payday`
+  (weekly 0–6 Mon..Sun = `datetime.weekday()`; monthly 1–28),
+  `next_run_at`, `last_paid_at`. `is_active` column stays (always `True`,
+  defended in `_settle`/`settle_all_due`) but there's **no pause in the
+  UI** — the user found on/paused/off confusing, so it's create-or-remove.
 - **NOT a wallet / not stateless-recompute.** Unlike savings/boost, each
   payout is a real one-time ledger write: a `debt_transactions` ADD row
   flagged **`is_allowance`** (migration adds the column,
@@ -321,17 +323,24 @@ in the kid's normal cash balance on schedule.
   Transaction-scoped so it auto-releases on commit/rollback (tests too).
 - **Endpoints**: `GET/PUT/DELETE /kids/{id}/allowance` (PUT/DELETE
   `require_parent`; GET is kid-or-parent via `get_kid_and_family`),
-  `GET /family/allowances`, `POST /family/allowances` (bulk = apply one
-  allowance to every kid). A plain amount edit keeps the existing
+  `GET /family/allowances` (batched — `build_family_views`: one query for
+  all allowances, one windowed query for all recent payouts, then settle
+  per kid; not the per-kid N+1 the perf section warns against),
+  `POST /family/allowances` (bulk = apply one allowance to every kid,
+  replacing any that exist). A plain amount edit keeps the existing
   `next_run_at`; changing cadence/payday re-anchors it.
 - **Frontend**: parent screen `/home/settings/allowance`
   (`allowance-settings-form.tsx`) — linked from a top-level Settings card
-  (above "Advanced investing & savings", it's a core feature). "Set the
-  same for everyone" block + per-kid cards (amount, Weekly/Monthly,
-  payday `<select>`, active toggle, Save/Remove). Kid sees an "Your
-  allowance" card on `kid-home.tsx` (amount + schedule + last/next
-  payday) linking to their balance history. `invalidateKid` now also
-  drops `allowance:<id>`; `api.put` added.
+  (above "Advanced investing & savings", it's a core feature). Layout
+  after user feedback: **"Active allowances"** at the top (one card per
+  kid who has one: summary + Edit + Turn off), then **kids without one**
+  (a "Set up ›" row → `AllowanceEditorSheet` bottom sheet), then a
+  collapsed **"Same for every kid"** form. Bulk apply over kids who
+  already have one pops a `ConfirmSheet` ("Replace existing?"). Kid sees a
+  **static** "Your allowance" info card on `kid-home.tsx` (amount +
+  schedule + last/next payday) — NOT a link (tapping it used to navigate
+  to history, which confused the user; "My balance history" button is
+  right below). `invalidateKid` drops `allowance:<id>`; `api.put` added.
 
 **Known gaps (not bugs):**
 1. `recent_payments` in the allowance view labels each payout with the
@@ -340,7 +349,8 @@ in the kid's normal cash balance on schedule.
    payouts until you open the history screen, which reconstructs them).
 2. Monthly payday capped at 28 (so every month has one) — no "last day
    of month" option.
-3. No "pay now / catch up now" button — settling is time-driven only.
+3. No "pay now / catch up now" button, and no pause — settling is
+   time-driven only, and turning an allowance off deletes its settings.
 4. `/home` doesn't settle inline; a payout shows on the parent's home
    after the next refresh sweep or when they open an allowance screen
    (the `/home` poll then reconciles). Acceptable — allowance isn't

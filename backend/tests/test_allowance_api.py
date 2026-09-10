@@ -39,7 +39,7 @@ async def test_parent_sets_and_reads_a_kids_allowance(client, auth_headers, fami
     resp = await client.put(
         f"/kids/{kid.id}/allowance",
         headers=auth_headers,
-        json={"amount": 12.5, "cadence": "weekly", "payday": 0, "is_active": True},
+        json={"amount": 12.5, "cadence": "weekly", "payday": 0},
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -65,16 +65,16 @@ async def test_update_then_delete(client, auth_headers, family, db_session):
     await client.put(
         f"/kids/{kid.id}/allowance",
         headers=auth_headers,
-        json={"amount": 10, "cadence": "monthly", "payday": 1, "is_active": True},
+        json={"amount": 10, "cadence": "monthly", "payday": 1},
     )
     upd = await client.put(
         f"/kids/{kid.id}/allowance",
         headers=auth_headers,
-        json={"amount": 20, "cadence": "monthly", "payday": 1, "is_active": False},
+        json={"amount": 20, "cadence": "weekly", "payday": 3},
     )
     assert Decimal(upd.json()["amount"]) == Decimal("20.00")
-    assert upd.json()["is_active"] is False
-    assert upd.json()["next_payday"] is None  # hidden while paused
+    assert upd.json()["cadence"] == "weekly"
+    assert upd.json()["next_payday"] is not None
 
     dele = await client.delete(f"/kids/{kid.id}/allowance", headers=auth_headers)
     assert dele.status_code == 204
@@ -86,7 +86,7 @@ async def test_bad_payday_is_rejected(client, auth_headers, family, db_session):
     resp = await client.put(
         f"/kids/{kid.id}/allowance",
         headers=auth_headers,
-        json={"amount": 10, "cadence": "weekly", "payday": 20, "is_active": True},
+        json={"amount": 10, "cadence": "weekly", "payday": 20},
     )
     assert resp.status_code == 400
 
@@ -96,7 +96,7 @@ async def test_kid_can_read_their_own_allowance_but_not_write(client, auth_heade
     await client.put(
         f"/kids/{kid.id}/allowance",
         headers=auth_headers,
-        json={"amount": 8, "cadence": "weekly", "payday": 0, "is_active": True},
+        json={"amount": 8, "cadence": "weekly", "payday": 0},
     )
 
     read = await client.get(f"/kids/{kid.public_id}/allowance", headers=_kid_headers(kid))
@@ -106,7 +106,7 @@ async def test_kid_can_read_their_own_allowance_but_not_write(client, auth_heade
     write = await client.put(
         f"/kids/{kid.public_id}/allowance",
         headers=_kid_headers(kid),
-        json={"amount": 100, "cadence": "weekly", "payday": 0, "is_active": True},
+        json={"amount": 100, "cadence": "weekly", "payday": 0},
     )
     assert write.status_code == 403
     assert (await client.delete(f"/kids/{kid.public_id}/allowance", headers=_kid_headers(kid))).status_code == 403
@@ -118,7 +118,7 @@ async def test_kid_cannot_read_a_siblings_allowance(client, auth_headers, family
     await client.put(
         f"/kids/{noa.id}/allowance",
         headers=auth_headers,
-        json={"amount": 8, "cadence": "weekly", "payday": 0, "is_active": True},
+        json={"amount": 8, "cadence": "weekly", "payday": 0},
     )
     # Maya's token, Noa's public_id in the path → 404 (deps isolation).
     resp = await client.get(f"/kids/{noa.public_id}/allowance", headers=_kid_headers(maya))
@@ -131,7 +131,7 @@ async def test_allowance_is_tenant_isolated(client, auth_headers, family, db_ses
     resp = await client.put(
         f"/kids/{kid.id}/allowance",
         headers=other_headers,
-        json={"amount": 5, "cadence": "weekly", "payday": 0, "is_active": True},
+        json={"amount": 5, "cadence": "weekly", "payday": 0},
     )
     assert resp.status_code == 404
 
@@ -143,7 +143,7 @@ async def test_bulk_apply_sets_every_kid(client, auth_headers, family, db_sessio
     resp = await client.post(
         "/family/allowances",
         headers=auth_headers,
-        json={"amount": 15, "cadence": "monthly", "payday": 1, "is_active": True},
+        json={"amount": 15, "cadence": "monthly", "payday": 1},
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -156,7 +156,7 @@ async def test_bulk_apply_with_no_kids_is_a_400(client, auth_headers, family, db
     resp = await client.post(
         "/family/allowances",
         headers=auth_headers,
-        json={"amount": 15, "cadence": "monthly", "payday": 1, "is_active": True},
+        json={"amount": 15, "cadence": "monthly", "payday": 1},
     )
     assert resp.status_code == 400
 
@@ -166,7 +166,7 @@ async def test_list_family_allowances_settles_due_payouts(client, auth_headers, 
     await client.put(
         f"/kids/{kid.id}/allowance",
         headers=auth_headers,
-        json={"amount": 10, "cadence": "weekly", "payday": 0, "is_active": True},
+        json={"amount": 10, "cadence": "weekly", "payday": 0},
     )
     # Back-date the schedule so two payouts are due.
     allowance = await db_session.scalar(select(Allowance).where(Allowance.kid_id == kid.id))
@@ -190,7 +190,7 @@ async def test_settle_on_read_reflects_in_kid_balance(client, auth_headers, fami
     await client.put(
         f"/kids/{kid.id}/allowance",
         headers=auth_headers,
-        json={"amount": 10, "cadence": "weekly", "payday": 0, "is_active": True},
+        json={"amount": 10, "cadence": "weekly", "payday": 0},
     )
     allowance = await db_session.scalar(select(Allowance).where(Allowance.kid_id == kid.id))
     allowance.next_run_at = datetime.now(timezone.utc) - timedelta(days=1)

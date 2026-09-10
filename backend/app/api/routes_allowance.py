@@ -48,7 +48,6 @@ async def upsert_kid_allowance(
             amount=body.amount,
             cadence=body.cadence,
             payday=body.payday,
-            is_active=body.is_active,
         )
     except allowance_service.AllowanceError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
@@ -108,7 +107,6 @@ async def set_family_allowance(
                 amount=body.amount,
                 cadence=body.cadence,
                 payday=body.payday,
-                is_active=body.is_active,
             )
     except allowance_service.AllowanceError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc

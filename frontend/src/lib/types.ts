@@ -233,7 +233,6 @@ export type AllowanceUpsert = {
   amount: number;
   cadence: AllowanceCadence;
   payday: number;
-  is_active: boolean;
 };
 
 export type KidMe = {

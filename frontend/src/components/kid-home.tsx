@@ -142,14 +142,10 @@ export function KidHome() {
         )}
 
         {allowance?.configured &&
-          allowance.is_active &&
           allowance.amount &&
           allowance.cadence != null &&
           allowance.payday != null && (
-            <Link
-              href={`${links.pagePrefix}/history`}
-              className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex flex-col gap-1"
-            >
+            <div className="bg-card rounded-2xl px-4 py-3.5 border border-border-hairline flex flex-col gap-1">
               <div className="flex items-center justify-between">
                 <span className="text-[13px] font-medium text-muted-strong">Your allowance</span>
                 <span className="font-semibold text-[15px] text-emerald-dark">
@@ -165,7 +161,7 @@ export function KidHome() {
                     ? `first payment ${formatDate(allowance.next_payday)}`
                     : ""}
               </div>
-            </Link>
+            </div>
           )}
       </div>
 

@@ -116,7 +116,6 @@ async def upsert_allowance(
     amount: Decimal,
     cadence: AllowanceCadence,
     payday: int,
-    is_active: bool,
 ) -> Allowance:
     if amount <= 0:
         raise AllowanceError("Amount must be greater than zero")
@@ -132,7 +131,6 @@ async def upsert_allowance(
             currency=family.base_currency,
             cadence=cadence,
             payday=payday,
-            is_active=is_active,
             next_run_at=first_run_at(now, cadence, payday),
         )
         session.add(allowance)
@@ -149,7 +147,7 @@ async def upsert_allowance(
     existing.currency = family.base_currency
     existing.cadence = cadence
     existing.payday = payday
-    existing.is_active = is_active
+    existing.is_active = True
     await session.flush()
     return existing
 

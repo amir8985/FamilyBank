@@ -67,7 +67,7 @@ async def test_new_allowance_does_not_pay_immediately(db_session, family):
     kid = await _kid(db_session, family)
     await allowance_service.upsert_allowance(
         db_session, kid, family, amount=Decimal("10"), cadence=AllowanceCadence.WEEKLY,
-        payday=0, is_active=True,
+        payday=0,
     )
     paid = await allowance_service.settle_due(db_session, kid, family.base_currency)
     assert paid == 0
@@ -78,7 +78,7 @@ async def test_settle_pays_each_missed_period_and_advances(db_session, family):
     kid = await _kid(db_session, family)
     allowance = await allowance_service.upsert_allowance(
         db_session, kid, family, amount=Decimal("10"), cadence=AllowanceCadence.WEEKLY,
-        payday=0, is_active=True,
+        payday=0,
     )
     # Pretend 3 weekly paydays have passed.
     allowance.next_run_at = datetime.now(timezone.utc) - timedelta(days=15)
@@ -98,7 +98,7 @@ async def test_settle_is_idempotent_within_a_period(db_session, family):
     kid = await _kid(db_session, family)
     allowance = await allowance_service.upsert_allowance(
         db_session, kid, family, amount=Decimal("10"), cadence=AllowanceCadence.WEEKLY,
-        payday=0, is_active=True,
+        payday=0,
     )
     allowance.next_run_at = datetime.now(timezone.utc) - timedelta(days=1)
     await db_session.flush()
@@ -108,12 +108,15 @@ async def test_settle_is_idempotent_within_a_period(db_session, family):
     assert await debts_db_service.get_balance(db_session, kid.id) == Decimal("10.00")
 
 
-async def test_inactive_allowance_never_pays(db_session, family):
+async def test_settle_skips_an_inactive_row(db_session, family):
+    # The UI has no "pause" — an allowance is created or removed — but the
+    # `is_active` guard stays as defence in case a row is ever flagged off.
     kid = await _kid(db_session, family)
     allowance = await allowance_service.upsert_allowance(
         db_session, kid, family, amount=Decimal("10"), cadence=AllowanceCadence.WEEKLY,
-        payday=0, is_active=False,
+        payday=0,
     )
+    allowance.is_active = False
     allowance.next_run_at = datetime.now(timezone.utc) - timedelta(days=30)
     await db_session.flush()
     assert await allowance_service.settle_due(db_session, kid, family.base_currency) == 0
@@ -124,7 +127,7 @@ async def test_long_gap_is_capped_not_dumped(db_session, family):
     kid = await _kid(db_session, family)
     allowance = await allowance_service.upsert_allowance(
         db_session, kid, family, amount=Decimal("5"), cadence=AllowanceCadence.WEEKLY,
-        payday=0, is_active=True,
+        payday=0,
     )
     # 5 years of unsettled weekly paydays.
     allowance.next_run_at = datetime.now(timezone.utc) - timedelta(days=365 * 5)
@@ -139,12 +142,12 @@ async def test_amount_edit_keeps_the_existing_next_payday(db_session, family):
     kid = await _kid(db_session, family)
     a1 = await allowance_service.upsert_allowance(
         db_session, kid, family, amount=Decimal("10"), cadence=AllowanceCadence.MONTHLY,
-        payday=15, is_active=True,
+        payday=15,
     )
     original = a1.next_run_at
     a2 = await allowance_service.upsert_allowance(
         db_session, kid, family, amount=Decimal("25"), cadence=AllowanceCadence.MONTHLY,
-        payday=15, is_active=True,
+        payday=15,
     )
     assert a2.next_run_at == original
     assert a2.amount == Decimal("25.00")
@@ -154,12 +157,12 @@ async def test_cadence_change_reanchors_the_schedule(db_session, family):
     kid = await _kid(db_session, family)
     a1 = await allowance_service.upsert_allowance(
         db_session, kid, family, amount=Decimal("10"), cadence=AllowanceCadence.MONTHLY,
-        payday=15, is_active=True,
+        payday=15,
     )
     original = a1.next_run_at
     a2 = await allowance_service.upsert_allowance(
         db_session, kid, family, amount=Decimal("10"), cadence=AllowanceCadence.WEEKLY,
-        payday=2, is_active=True,
+        payday=2,
     )
     assert a2.next_run_at != original
     assert a2.cadence == AllowanceCadence.WEEKLY
@@ -172,7 +175,7 @@ async def test_payout_converts_from_set_time_currency(db_session, family):
     kid = await _kid(db_session, family)  # family is USD
     allowance = await allowance_service.upsert_allowance(
         db_session, kid, family, amount=Decimal("10"), cadence=AllowanceCadence.WEEKLY,
-        payday=0, is_active=True,
+        payday=0,
     )
     allowance.next_run_at = datetime.now(timezone.utc) - timedelta(days=1)
     await db_session.flush()

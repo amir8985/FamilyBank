@@ -12,7 +12,6 @@ class AllowanceUpsert(BaseModel):
     cadence: AllowanceCadence
     # Weekly: 0=Monday .. 6=Sunday. Monthly: 1..28.
     payday: int = Field(ge=0, le=28)
-    is_active: bool = True
 
 
 class BulkAllowanceUpsert(AllowanceUpsert):
