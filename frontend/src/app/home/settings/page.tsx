@@ -1,5 +1,6 @@
 import { PageHeader } from "@/components/ui/page-header";
 import { SettingsForm } from "@/components/settings-form";
+import { AppVersion } from "@/components/app-version";
 import packageJson from "../../../../package.json";
 
 // Everything this screen needs — the family currency and the kid list —
@@ -11,7 +12,7 @@ export default function SettingsPage() {
     <div className="max-w-md mx-auto min-h-screen flex flex-col">
       <PageHeader title="Settings" backHref="/home" />
       <SettingsForm />
-      <div className="text-center text-[12px] text-muted pb-6">v{packageJson.version}</div>
+      <AppVersion clientVersion={packageJson.version} />
     </div>
   );
 }
