@@ -119,8 +119,8 @@ the dev server + synthetic test family (`family_id
    silent thereafter.
 7. **Server-version display** (2026-09-10): `/health` returns the API
    version; Settings footer reveals it under the frontend version on tap.
-8. **Allowance (דמי כיס)** (branch `kid-allowance`, 2026-09-10, *not yet
-   merged*): recurring weekly/monthly cash top-up per kid — see its
+8. **Allowance (דמי כיס)** (merged 2026-09-10, backend `1.10.0` / frontend
+   `0.11.0`): recurring weekly/monthly cash top-up per kid — see its
    section below.
 
 ### Savings plans — what it is and key decisions
