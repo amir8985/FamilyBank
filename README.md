@@ -59,7 +59,8 @@ external account needed.
 - Buy flow: amount↔units toggle with a live server-computed quote, insufficient-funds guard
 - 20 stocks + 5 baskets (incl. TA35.TA, ^STOXX) seeded via Alembic
 - Prices + FX refreshed together by one scheduler job hit via `POST /internal/refresh`
-  (wire this to Vercel/Railway Cron 4-5x/day in production — see backend README)
+  (in production, a Cloud Scheduler job hits this every 3h — see
+  `docs/cloud-run-migration.md`)
 - Family base-currency setting (`/home/settings`)
 - PWA manifest + minimal service worker for "Add to Home Screen"
 

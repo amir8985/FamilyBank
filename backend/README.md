@@ -28,8 +28,9 @@ curl -X POST http://localhost:8000/internal/refresh \
   -H "X-Scheduler-Secret: $INTERNAL_SCHEDULER_SECRET"
 ```
 
-In production this is what a Vercel/Railway Cron job hits 4-5x/day
-(architecture 5.5) — nothing calls Yahoo per-request or per-family.
+In production this is what a Cloud Scheduler job hits every 3h
+(architecture 5.5; see `docs/cloud-run-migration.md`) — nothing calls
+Yahoo per-request or per-family.
 
 ## Auth flow
 

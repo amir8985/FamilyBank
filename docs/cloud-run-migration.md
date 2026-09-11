@@ -1,8 +1,13 @@
 # Backend migration: Render → Cloud Run (Frankfurt)
 
-Status: **planned / in progress.** Backend code changes (advisory lock,
-staleness fallback, Dockerfile, `cloudbuild.yaml`) are done on branch
-`perf-followups`. The GCP wiring below is not done yet.
+Status: **DONE (2026-09-11).** Production backend is on Cloud Run, cutover
+verified against real traffic, auto-deploy working, cron confirmed healthy
+over a full day, daily backups green. Kept as a reference for the exact
+commands and the decisions behind them — see `CLAUDE.md`'s "Backend
+migrated Render → Cloud Run" entry for the current-state summary.
+Remaining: Render is intentionally still running as a standby (delete
+later, no rush — see Part 8); the monitoring alert in Part 7 was removed
+as unreliable, not replaced.
 
 ## Why
 
@@ -142,12 +147,20 @@ gcloud run deploy familybank-backend \
   --region=$REGION \
   --allow-unauthenticated \
   --min-instances=0 \
-  --max-instances=4 \
+  --max-instances=2 \
+  --timeout=60 \
   --set-env-vars=DEFAULT_BASE_CURRENCY=USD,DEV_MODE=false,SCHEDULER_ENABLED=false,SCHEDULER_INTERVAL_HOURS=5,REFRESH_STALENESS_THRESHOLD_HOURS=10,FRONTEND_BASE_URL=https://<canonical-frontend-domain> \
   --set-secrets=DATABASE_URL=DATABASE_URL:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,BACKEND_JWT_SECRET=BACKEND_JWT_SECRET:latest,INTERNAL_SCHEDULER_SECRET=INTERNAL_SCHEDULER_SECRET:latest,CORS_ORIGINS=CORS_ORIGINS:latest
 ```
 
 Key choices:
+- **`--max-instances=2` / `--timeout=60`** — cost ceiling. Caps a
+  runaway-traffic worst case at 2 containers (vs. no ceiling), and kills
+  a stuck request after 60s instead of holding a container for the
+  default 300s (the slowest real endpoint, `/internal/refresh`, runs
+  ~5s). Pair with a GCP Billing budget + email alert (Billing → Budgets
+  & alerts) — this bounds cost, the budget alert tells you fast if
+  something's actually wrong.
 - **`SCHEDULER_ENABLED=false`** — the in-process loop is off; Cloud
   Scheduler drives the refresh now. The staleness fallback in the app
   code covers a missed run.
@@ -279,35 +292,62 @@ For anything inside the last 6 h, Neon's own **Restore** (Branches → the
 branch → Restore, pick a timestamp) is finer-grained than the daily dump
 — use that first when the incident is recent.
 
-## Part 7 — Monitoring (the real "cron died" signal)
+## Part 7 — Monitoring (the real "cron died" signal) — REMOVED, tried and reverted
 
 The staleness fallback covers a missed run or two; it does not tell you
-the scheduler is dead. What's set up:
+the scheduler is dead, so an alert was worth having in principle. What
+was actually tried:
 
-- **Log-based metric** `price_refresh_complete` — counts
+- Log-based metric `price_refresh_complete`, counting
   `resource.type="cloud_run_revision" AND "Scheduler refresh complete"`.
-- **Alert policy "Price refresh stopped"** — condition type *Metric
-  absence*, trigger `6h` (the cron runs every 3h, so a healthy system
-  always has a data point within any 6h window). Notifies the
-  `familybank alerts` email channel.
-- The email channel needs verifying once: Monitoring → Alerting → *Edit
-  notification channels* → the email row → send/confirm the verification
-  link.
+- Alert policy "Price refresh stopped" — condition type *Metric
+  absence*, trigger `6h`.
 
-## Part 8 — Cutover
+**Deleted after it false-fired twice in under 2 days** while
+`gcloud logging read 'resource.type="cloud_run_revision" AND
+resource.labels.service_name="familybank-backend" AND textPayload:
+"Scheduler refresh complete"' --freshness=2d --order=asc
+--format="value(timestamp)"` proved the refresh had run on every single
+3-hourly slot with zero real gaps. Root cause: `conditionAbsent` on a
+log-derived metric that only emits a point every ~3h (naturally
+mostly-empty alignment buckets) is a known-flaky combination in Cloud
+Monitoring — it misfires independent of actual health. An alert nobody
+trusts is worse than no alert, so it was removed rather than tuned.
 
-1. Deploy to Cloud Run, verify `/health` and a manual `/internal/refresh`.
-2. Point the frontend at the new URL: Vercel → project → Settings →
-   Environment Variables → set `BACKEND_URL` and
-   `NEXT_PUBLIC_BACKEND_URL` to `$SERVICE_URL`. Redeploy the frontend.
-3. Make sure `$SERVICE_URL`'s Vercel origin is in `CORS_ORIGINS` (it is
-   if you kept the same Vercel domain).
-4. Watch Cloud Run logs + `request_logs` for a day — confirm latency
-   dropped and the scheduled refresh fires.
-5. On Render: set `SCHEDULER_ENABLED=false` (or just suspend the
-   service). Keep it suspended-but-alive for a few days as a fallback.
-6. Once confident: delete the Render service. Remove `render.yaml`, or
-   leave it with a "decommissioned" comment.
+**If revisited**, don't repeat this shape. Better options:
+- Alert on Cloud Scheduler's own native metric
+  `cloudscheduler.googleapis.com/job/attempt_count` filtered to failed
+  attempts (threshold, not absence) — a real Monitoring metric, not a
+  log-derived one, doesn't have this failure mode. Blind spot: doesn't
+  catch the scheduler being disabled entirely (zero attempts, not a
+  failed one).
+- Or accept that `spawn_refresh_if_stale` (in the app itself) is the
+  real safety net and skip external alerting altogether — it already
+  guarantees prices are never more than ~10h stale regardless of what
+  the external cron does.
+
+The email notification channel (`familybank alerts`) is still there and
+works (proven — it delivered both false-alarm emails); reuse it if a
+replacement alert is built.
+
+## Part 8 — Cutover — DONE (2026-09-11)
+
+1. ✅ Deployed to Cloud Run, `/health` and a manual `/internal/refresh`
+   both verified (~5s round-trip, ~9ms/query — vs. Render's 300-450ms).
+2. ✅ Frontend repointed: Vercel `BACKEND_URL` / `NEXT_PUBLIC_BACKEND_URL`
+   → the Cloud Run URL, both re-created as **Config** type (not Secret —
+   a `NEXT_PUBLIC_*` var is browser-exposed by design, Vercel warns if
+   it's marked Secret). Redeployed.
+3. ✅ `CORS_ORIGINS` includes the canonical frontend domain
+   (`familybank.kithcraft.com`) plus the Vercel domain.
+4. ✅ Confirmed via Cloud Run logs: real browser traffic (`/home`,
+   `/catalog`, `/kids/.../portfolio`, `/kids/.../savings`) all `200`.
+   Scheduled refresh confirmed firing every 3h with zero gaps over a full
+   day (`gcloud logging read` — see Part 7 for the exact command).
+5. ✅ Render: `SCHEDULER_ENABLED=false` set.
+6. **Not done — deliberately.** Render is being kept alive a while
+   longer as a standby/rollback path (it's free tier, $0 cost to leave
+   running). Revisit deleting it after a longer soak; not urgent.
 
 ## Rollback
 
@@ -321,7 +361,16 @@ unchanged. Keep Render around until this is clearly not needed.
   a provider that has an SLA. Deliberately sequenced *after* this
   migration so a break is attributable to one change at a time. Consider
   coverage of `TA35.TA` / `^STOXX` and historical-tick support when
-  evaluating.
-- Multi-instance: `max-instances` is 4. The in-process scheduler is off,
-  so that's fine, but if anything else instance-affine is added later,
-  re-check.
+  evaluating. Not started.
+- **Decommission Render** once the standby period feels long enough —
+  delete the service, remove/decomission `render.yaml`.
+- **Backups off GitHub Actions, onto GCP** (Cloud Run Job + GCS) if
+  "a second system to remember" keeps bothering you — explicitly
+  deferred, not urgent. See Part 6.
+- **A real "cron died" alert**, done right this time (Cloud Scheduler's
+  own `job/attempt_count` metric, not a log-derived absence check) — see
+  Part 7 for what was tried and why it was removed.
+- `max-instances=2` (tightened from the initial `4` for cost control —
+  see the chat history / commit messages around 2026-09-10 for the
+  reasoning). Raise it if real usage ever needs more headroom; watch
+  Cloud Run's own instance-count metric rather than guessing.

@@ -48,20 +48,82 @@ version again to collapse. Fetches `/health` from
 covers the endpoint. Kept deliberately minimal per user: just the two
 version numbers, hidden by default so the footer stays quiet.
 
-**`perf-followups` — Cloud Run migration groundwork (worker-1).** The
-*code* landed on `master` 2026-09-09 (`scheduler/jobs.py`: a Postgres
-session-level advisory lock around `run_refresh()` so overlapping
-triggers don't double-write `price_ticks` — the lock session must hold
-its connection for the whole refresh, don't add a `commit()`; plus
-`spawn_refresh_if_stale(prices_as_of)`, a best-effort catch-up refresh
-`/home`+`/catalog` fire when cached prices are older than
-`refresh_staleness_threshold_hours` — insurance for a missed external
-cron, disabled in tests via `set_stale_fallback_enabled` + an autouse
-fixture). **The GCP move itself is not done** — project, Artifact
-Registry, first deploy, Cloud Build trigger, Cloud Scheduler jobs,
-monitoring alert, the frontend URL cutover, decommissioning Render — all
-in `docs/cloud-run-migration.md`, gated on user action. Replacing the
-Yahoo price fetch is deliberately sequenced after that migration.
+**Backend migrated Render → Cloud Run (worker-1, 2026-09-10/11). DONE —
+this is now where production actually runs.** Full narrative + every
+`gcloud`/console step in `docs/cloud-run-migration.md`; this is the
+load-bearing summary.
+
+- **Code** (landed on `master` 2026-09-09, prerequisite for the move):
+  `scheduler/jobs.py` — a Postgres session-level advisory lock around
+  `run_refresh()` so overlapping triggers can't double-write
+  `price_ticks` (the lock session must hold its connection for the whole
+  refresh — a `commit()` mid-way hands the connection back to the pool
+  and the later unlock silently no-ops on a different one; this cost a
+  real debug cycle, don't "optimize" it back in). Plus
+  `spawn_refresh_if_stale(prices_as_of)` — `/home`/`/catalog` fire a
+  best-effort catch-up refresh when cached prices are older than
+  `refresh_staleness_threshold_hours` (10h) — the actual safety net if
+  the external cron ever dies, independent of any GCP alerting.
+- **Infra**: GCP project `familybank-506108` (already existed, for
+  Google OAuth) reused — not a new project. `europe-west3` (Frankfurt),
+  matching Neon's region — this is the entire point: per-query latency
+  dropped from Render's ~300-450ms floor to **~5-9ms**. Backend service
+  `familybank-backend` on Cloud Run (`backend/Dockerfile`,
+  `--max-instances=2`, `--timeout=60`, `--min-instances=0` — pay $0
+  idle). `cloudbuild.yaml` (repo root) is the deploy pipeline — build →
+  `alembic upgrade head` (needs ALL required secrets, not just
+  `DATABASE_URL`: `alembic/env.py` imports the app config, pydantic
+  wants every non-defaulted field) → `gcloud run deploy` (no
+  `--set-env-vars`/`--set-secrets` there — sourced once at first manual
+  deploy, gcloud preserves them across image-only redeploys). A Cloud
+  Build trigger on push to `master` runs this automatically — same "push
+  to master ships" model as Render, just a different backend.
+- **The refresh trigger is Cloud Scheduler → `POST /internal/refresh`
+  on the *service itself*** (not a separate Cloud Run Job) — deliberate:
+  reuses the one existing endpoint, shares a single code path with the
+  staleness fallback above, and the refresh (~5s, all `await`ed I/O)
+  doesn't meaningfully compete with request serving. Schedule
+  `1 */3 * * *` UTC (every 3h) — **not** market-hours-aligned on
+  purpose: the boost math prorates by real elapsed time between
+  `price_ticks` (`boost_service._walk`), so cadence doesn't change boost
+  outcomes, and other exchanges have other hours anyway.
+- **`SCHEDULER_ENABLED=false`** on both Cloud Run and Render now — Cloud
+  Scheduler is the sole trigger.
+- **Cutover done and verified**: Vercel's `BACKEND_URL` /
+  `NEXT_PUBLIC_BACKEND_URL` point at the Cloud Run URL; real traffic
+  confirmed hitting it (`/home`, `/catalog`, `/kids/.../portfolio` all
+  200 from real browsers). **Render is intentionally still running, as
+  a standby/rollback** (`SCHEDULER_ENABLED=false`, otherwise untouched)
+  — free tier, $0 cost pressure to delete it quickly; leave it a few
+  more days before decommissioning.
+- **Monitoring: a "price refresh stopped" alert was tried and removed.**
+  A Cloud Monitoring `conditionAbsent` policy on a log-based metric
+  (counting `"Scheduler refresh complete"` lines) false-fired **twice**
+  in <2 days while the real refresh history (verified via
+  `gcloud logging read ... --freshness=2d`) showed zero actual gaps —
+  a known rough edge: absence-detection on a metric that only reports
+  every ~3h (naturally mostly-empty buckets) misfires independent of
+  real health. Deleted rather than kept as a alert nobody trusts. **If
+  revisited**, alert on Cloud Scheduler's own native
+  `cloudscheduler.googleapis.com/job/attempt_count` (failed attempts)
+  instead of a derived log metric — doesn't have this failure mode, at
+  the cost of not catching "scheduler disabled entirely" (zero attempts,
+  zero failures). The app's own `spawn_refresh_if_stale` is the real
+  safety net either way.
+- **Daily DB backup**: `.github/workflows/db-backup.yml` — `pg_dump`
+  daily at 02:17 UTC, gzipped, kept as a **GitHub Actions artifact for
+  90 days** (GitHub → Actions → "DB backup" → a run → Artifacts) —
+  deliberately *not* in GCP (no new image/bucket/service-account to
+  build); needs repo secret `BACKUP_DATABASE_URL` (Neon's plain
+  `postgresql://` production string, not the app's `+asyncpg` one).
+  Restore procedure (download → load into a scratch Neon branch via
+  `psql` → never straight onto production) is in
+  `docs/cloud-run-migration.md`. **Known tradeoff, accepted for now**:
+  lives outside GCP, a second system to remember — flagged as a "move to
+  a Cloud Run Job + GCS" TODO, not urgent, user explicitly deferred it.
+- **Not done, low priority**: replacing the Yahoo price fetch
+  (deliberately sequenced after this migration, still not started);
+  decommissioning Render (waiting out a standby period first).
 
 Shipped, in order, each reviewed + tested + Playwright-verified against
 the dev server + synthetic test family (`family_id
@@ -358,9 +420,13 @@ of the same symbol are separate, independently-sellable lots. Legacy
 
 Root cause: **per-query network latency to Neon (~300-450ms floor per
 query, roughly constant regardless of query complexity), multiplied by
-however many queries an endpoint runs sequentially** — points at
-Render/Neon region mismatch (confirmed by user, **not yet fixed** — needs
-a dashboard region decision, not a code change). Can't fix by
+however many queries an endpoint runs sequentially** — pointed at a
+Render/Neon region mismatch. **Fixed 2026-09-10/11** by migrating the
+backend to Cloud Run in Neon's own region (see "Backend migrated Render →
+Cloud Run" above) — per-query latency is now ~5-9ms, confirmed against
+real production traffic. The query-reduction work below still stands
+(fewer round-trips is still better even at low per-query cost) but is no
+longer the binding constraint. Can't fix by
 `asyncio.gather`-ing queries within a request: `AsyncSession` isn't safe
 for concurrent use, and opening a second connection mid-request would
 break test isolation (`tests/conftest.py`'s uncommitted-outer-transaction
@@ -382,24 +448,46 @@ design. Frontend: `loading.tsx`/`error.tsx` added to every `/home` and
 into a Suspense-wrapped `OnboardingGate` (a layout doing a blocking fetch
 in its body blocks every route below it — see Lessons learned).
 
-Scale review findings not yet acted on: single Render instance/uvicorn
-process (fine at current traffic); in-process scheduler assumes exactly
-one instance (needs leader election or the external-cron model before
-adding a 2nd instance); connection pool unconfigured (SQLAlchemy default
-5+10); free tiers (Render+Neon) aren't built for real scale regardless of
-code — needs a paid-tier decision from the user, not flagged as urgent.
+Scale review findings, updated post-migration: the in-process-scheduler/
+single-instance constraint is **resolved** — Cloud Run's trigger is now
+external (Cloud Scheduler), so `--max-instances` can go above 1 without
+the old "every instance runs its own refresh loop" problem (currently
+capped at 2, deliberately — see the migration doc's cost-control
+section; raise it if real usage ever needs it, watch Cloud Run's own
+metrics rather than guessing). Connection pool still unconfigured
+(SQLAlchemy default 5+10) — untested at real concurrency. Neon free tier
+still isn't built for real scale regardless of backend host — a paid
+Neon tier is a user cost decision, not flagged urgent.
 
 ### Deployed
 
-- Frontend: https://family-bank-nine.vercel.app (Vercel, root dir
-  `frontend`, auto-deploys from `master`).
-- Backend: https://familybank-backend.onrender.com (Render, `render.yaml`
-  at repo root, auto-deploys from `master`).
-- **`master` is the deploy branch for both** — a `worker-N` branch isn't
-  live until merged. Env vars live in each platform's dashboard, not the
-  repo — add new required vars in both the dashboard and local `.env`.
-- Render free tier sleeps after 15 min idle (30-50s cold start) — not a
-  bug if something's slow after a break.
+- **Frontend**: https://familybank.kithcraft.com (custom domain; also
+  reachable at https://family-bank-nine.vercel.app) — Vercel, root dir
+  `frontend`, auto-deploys from `master`.
+- **Backend (production, as of 2026-09-11)**: Cloud Run —
+  `familybank-backend` service, `europe-west3`, GCP project
+  `familybank-506108`. Auto-deploys from `master` via a Cloud Build
+  trigger (`cloudbuild.yaml`). Get the current URL with
+  `gcloud run services describe familybank-backend --region=europe-west3
+  --format='value(status.url)'` — don't hardcode it, Cloud Run revision
+  URLs are stable but confirm before assuming.
+- **Backend (standby)**: https://familybank-backend.onrender.com still
+  running (`render.yaml`, `SCHEDULER_ENABLED=false`), kept alive
+  deliberately as a rollback path — not receiving real traffic. Safe to
+  decommission after a longer soak; not done yet, not urgent (free
+  tier, $0 cost to leave it).
+- **`master` is the deploy branch for the frontend and both backend
+  hosts** — a `worker-N` branch isn't live until merged. Env vars live
+  in each platform's dashboard/Secret Manager, not the repo — GCP
+  secrets: `DATABASE_URL`, `GOOGLE_CLIENT_ID`, `BACKEND_JWT_SECRET`,
+  `INTERNAL_SCHEDULER_SECRET`, `CORS_ORIGINS` (Secret Manager);
+  `FRONTEND_BASE_URL` is a plain (non-secret) Cloud Run env var — must
+  be the canonical frontend domain explicitly, its fallback (first
+  `CORS_ORIGINS` entry) has actually pointed kid-invite links at the
+  wrong domain in production once.
+- Price/FX refresh: **Cloud Scheduler** job `familybank-price-refresh`
+  (`europe-west3`), every 3h → `POST /internal/refresh`. Not the old
+  Render in-process loop.
 - `TODO.txt` at repo root is the user's own untracked feature-idea
   scratch list — not part of the build, don't rely on it being there.
 
