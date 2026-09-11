@@ -18,7 +18,7 @@ from app.core.currencies import SUPPORTED_CURRENCIES
 from app.core.db import SessionLocal
 from app.models.catalog import AssetCatalog, PriceCache, PriceTick
 from app.models.request_log import RequestLog
-from app.services import fx_service
+from app.services import allowance_service, fx_service
 from app.services.investing_service import clear_price_context_cache
 from app.services.price_client import PriceFetchError, fetch_quote
 
@@ -163,6 +163,15 @@ async def _run_refresh() -> None:
     # So requests right after a refresh see the new prices immediately,
     # rather than waiting out the safety-net TTL (investing_service.py).
     clear_price_context_cache()
+
+    # Piggyback the recurring-allowance sweep on this cadence (like the
+    # request_logs cleanup below) — no separate cron needed. It's a
+    # best-effort backstop: allowance data is also settled inline whenever
+    # a kid or parent opens an allowance screen.
+    try:
+        await allowance_service.settle_all_due()
+    except Exception:
+        logger.exception("Allowance sweep failed during refresh — will retry next cycle")
 
     deleted = await cleanup_old_request_logs()
 

@@ -9,6 +9,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatDateTime, formatMoney } from "@/lib/format";
 import type { DebtTransactionOut } from "@/lib/types";
 
+function transactionLabel(t: DebtTransactionOut): string {
+  if (t.is_adjustment) return "Currency conversion";
+  if (t.is_investment) return t.type === "add" ? "Sold" : "Bought";
+  if (t.is_savings) return t.type === "add" ? "Savings payout" : "Moved to savings";
+  if (t.is_allowance) return "Allowance";
+  return t.type === "add" ? "Added" : "Deducted";
+}
+
 export default function KidHistoryPage({
   params,
 }: {
@@ -50,19 +58,7 @@ export default function KidHistoryPage({
         )}
 
         {transactions?.map((t) => {
-          const label = t.is_adjustment
-            ? "Currency conversion"
-            : t.is_investment
-              ? t.type === "add"
-                ? "Sold"
-                : "Bought"
-              : t.is_savings
-                ? t.type === "add"
-                  ? "Savings payout"
-                  : "Moved to savings"
-                : t.type === "add"
-                  ? "Added"
-                  : "Deducted";
+          const label = transactionLabel(t);
           return (
             <div
               key={t.id}
