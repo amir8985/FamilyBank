@@ -18,8 +18,8 @@ class AllowanceCadence(str, enum.Enum):
 
 
 class Allowance(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
-    """A recurring cash payment a parent sets up for one kid — "pocket
-    money" (spec: דמי כיס). At most one per kid (a kid either has an
+    """A recurring cash payment a parent sets up for one kid — pocket
+    money / allowance. At most one per kid (a kid either has an
     allowance or doesn't); regenerating just updates this row.
 
     It is deliberately *not* a wallet or a compounding balance: each

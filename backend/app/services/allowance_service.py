@@ -1,6 +1,6 @@
-"""Recurring allowance ("pocket money" / דמי כיס) — a parent sets a
-weekly or monthly amount for a kid and it lands in their normal cash
-balance on schedule.
+"""Recurring allowance / pocket money — a parent sets a weekly or
+monthly amount for a kid and it lands in their normal cash balance on
+schedule.
 
 Unlike savings/boost (stateless, recomputed on every read), an allowance
 payout is a real one-time ledger write: a `debt_transactions` ADD row

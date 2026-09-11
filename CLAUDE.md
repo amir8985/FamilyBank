@@ -18,6 +18,17 @@ placed last, not only at the top.
 
 **Always reply to the user in English**, even when they write in Hebrew.
 
+**English only, everywhere — no Hebrew at all.** This is strict and
+non-negotiable: no Hebrew in code, identifiers, comments, docstrings,
+strings, test data, commit messages, PR descriptions, branch names,
+CLAUDE.md, or any other file you write or edit. Not even for a feature
+the user names in Hebrew — translate it (the recurring-payment feature is
+"allowance" / "pocket money" in English, never the Hebrew term). The only
+Hebrew that may remain is text that predates this rule in files you are
+not otherwise touching (the product spec under
+`design_handoff_familybank/`). If the user gives you a Hebrew term, use
+its English equivalent in everything you produce.
+
 ## What this is
 
 Parents track allowance/debt owed to their kids; kids "invest" that
@@ -32,12 +43,12 @@ frontend/   Next.js 16 (App Router) + Tailwind v4 — see frontend/README.md
 
 ## Current status (as of 2026-09-10)
 
-**Allowance (דמי כיס) — merged to `master`** (backend `1.10.0`, frontend
+**Allowance — merged to `master`** (backend `1.10.0`, frontend
 `0.11.0`). Migration **0016** (`allowances` table + `debt_transactions.
 is_allowance`). Parents set a recurring weekly/monthly cash top-up per
 kid (or "same for everyone"); it lands in the kid's normal cash balance
 on schedule as an `is_allowance`-flagged ledger credit. Full design +
-decisions in the "Allowance (דמי כיס)" section below. Key things for the
+decisions in the "Allowance" section below. Key things for the
 next session:
 - **No cron.** Payouts settle lazily — inline when anyone opens an
   allowance screen (kid home, parent settings landing + allowance
@@ -119,7 +130,7 @@ the dev server + synthetic test family (`family_id
    silent thereafter.
 7. **Server-version display** (2026-09-10): `/health` returns the API
    version; Settings footer reveals it under the frontend version on tap.
-8. **Allowance (דמי כיס)** (merged 2026-09-10, backend `1.10.0` / frontend
+8. **Allowance** (merged 2026-09-10, backend `1.10.0` / frontend
    `0.11.0`): recurring weekly/monthly cash top-up per kid — see its
    section below.
 
@@ -316,7 +327,7 @@ Check `netstat`/`.env` for ground truth before trusting this.
    arbitrarily. Fine in practice — each kid uses their own
    `/kid/kids/<handle>` link and `kid_last` is set on every home load.
 
-### Allowance (דמי כיס) — what it is and key decisions
+### Allowance — what it is and key decisions
 
 Migration **0016** (`allowances` + `debt_transactions.is_allowance`).
 Parent sets a recurring cash top-up per kid (or the same for all kids at
